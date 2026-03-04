@@ -12,7 +12,7 @@ Auto-Git is a lightweight Windows desktop application designed to streamline you
 
 ## The Interface
 
-Main Controls:
+### Main Controls:
 
 * **Push**: Stage all changes and upload them to the remote repository.
 
@@ -20,7 +20,7 @@ Main Controls:
 
 * **Status**: Instantly check the current state of your branch and staged files.
 
-Menu Options
+### Menu Options
 
 Located in the top-left corner, the menu allows you to:
 
