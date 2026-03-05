@@ -1,0 +1,21 @@
+[package]
+name = "auto-git"
+description = "Un progetto per allineare automaticamente il progetto locale con la versione su github"
+version = "0.2.0"
+edition = "2024"
+
+[profile.release]
+strip = true
+opt-level = 3
+debug = false
+
+[dependencies]
+win-msgbox = "0.2.1"
+tinterm = "0.2.0"
+rfd = "0.16.0"
+powershell_script = "1.1.0"
+crossterm = "0.29.0"
+eframe = "0.33.3"
+log = "0.4.29"
+env_logger = "0.11.9"
+# tokio = { version = "1.49.0", features = ["rt", "rt-multi-thread"] }
