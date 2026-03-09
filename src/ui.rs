@@ -279,6 +279,7 @@ impl AutoGitApp {
             }
 
             self.commit_input_expanded = false;
+            self.complete_push = false;
         }
         
     }
