@@ -262,6 +262,8 @@ impl AutoGitApp {
 
                     self.shared_data.terminal_output.lock().unwrap().push(format!("{OK_TICK} Push completed successfully"));
                     
+                    self.shared_data.files_staged.lock().unwrap().clear();
+                    
                     if in_error_state { self.shared_data.condvar.notify_all(); }
                 },
                 Err(err) => {
@@ -277,7 +279,7 @@ impl AutoGitApp {
                     }
                 }
             }
-
+        
             self.commit_input_expanded = false;
             self.complete_push = false;
         }
