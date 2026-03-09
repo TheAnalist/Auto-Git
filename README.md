@@ -22,7 +22,7 @@ Auto-Git is a lightweight Windows desktop application designed to streamline you
 Located in the top-left corner, the menu allows you to:
 
 * *Select Project*: Choose your project directory (Note: The folder must contain a .git directory).
-* *Advanced Options*: (Coming Soon) Custom configurations and tweakable settings.
+* *Advanced Options*: Custom configurations and tweakable settings.
 * *Reset State*: Clear internal errors and refresh the application logic.
 
 ## Installation
@@ -51,6 +51,6 @@ If the app behaves unexpectedly:
 
 ## Roadmap
 
-* \[ ] Implement Advanced Options menu.
+* \[ ] Complete advanced options menu: Add, Restore, Clone
+* \[ ] Create a new repository with "init" from the menu.
 * \[ ] Add support for multiple remote branches.
-* \[ ] Custom commit messages for the Push button.

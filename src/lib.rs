@@ -89,6 +89,14 @@ pub fn lib_pwsh_psscript_builder() -> PsScript {
         .build()
 }
 
+// impl PsScriptEntity {
+//     pub fn new() -> Self {
+//         Self { 
+//             entity: lib_pwsh_psscript_builder()
+//         }
+//     }    
+// }
+
 pub fn lib_check_internet() -> bool {
     info!(target: "lib", "checking internet connection");
 
@@ -234,11 +242,20 @@ pub fn lib_check_remote_ahead(status_string: String) -> bool {
     }
 }
 
-pub fn lib_make_pull(project_path: &Option<PathBuf>) -> Result<(), Error> {
+pub fn lib_make_pull(project_path: &Option<PathBuf>, terminal_output: &mut Vec<String>) -> Result<(), Error> {
     info!(target: "lib", "pulling from remote repository");
+
+    if terminal_output.len() > MAX_TERMINAL_LENGHT {
+        terminal_output.remove(0);
+    }
+
+    terminal_output.push("▶ Processing pull form remote repository...".to_string());
 
     // sono sicuro che project_path sia Some
     let path = project_path.as_ref().unwrap().display().to_string();
+
+    // let mut command = String::with_capacity(path.len() + "git pull".len());
+    // write!(command, "cd {path};git pull").unwrap();
 
     match git(&["pull"], Some(path.as_ref())) {
         Ok(_) => {
@@ -248,7 +265,7 @@ pub fn lib_make_pull(project_path: &Option<PathBuf>) -> Result<(), Error> {
         Err(err) => {
             error!(target: "lib", "{err}");
             error::<Okay>(
-                &format!("Could not pull from the remote repository, check your internet connection or the selected project path\n{err}"))
+                &format!("Could not execute pull, check your internet connection or the selected project path\n{err}"))
                 .show()
                 .unwrap();
             Err(err)
@@ -310,7 +327,7 @@ pub fn lib_stage_changes(project_path: &Option<PathBuf>, files_staged: &mut Vec<
                     Err(err) => {
                         error!(target: "lib", "{err}");
                         error::<Okay>(
-                            &format!("Could not add files to the commit\n{err}"))
+                            &format!("Could not commit the changes, check your internet connection or the selected project path\n{err}"))
                             .show()
                             .unwrap();
 
@@ -344,7 +361,7 @@ pub fn lib_make_push(project_path: &Option<PathBuf>, commit_message: &String) ->
             Err(err) => {
                 error!(target: "lib", "{err}");
                 error::<Okay>(
-                    &format!("Could not commit the changes, check your internet connection or the selected project path\n{err}"))
+                    &format!("Could not commit changes, check your internet connection or the selected project path\n{err}"))
                     .show()
                     .unwrap();
                 
@@ -371,4 +388,85 @@ pub fn lib_make_push(project_path: &Option<PathBuf>, commit_message: &String) ->
         error!(target: "lib", "project path not selected");
         Err(Error::Io(io::Error::new(io::ErrorKind::NotFound, "path file not set!")))
     }
+}
+
+pub fn lib_get_untracked_files(project_path: &Option<PathBuf>, untracked_files_vec: &mut Vec<(bool, String)>) -> Result<(), Error>{
+    info!(target: "lib", "getting untracked files");
+
+    if let Some(project_path) = project_path {
+        match git(&["status", "-s"], Some(project_path.as_path())) {
+            Ok(out) => {
+                let outputstr :String = out.stdout.iter().map(|c| *c as char).collect::<String>();
+                /*
+                Format (outputstr.split_whitespace):
+                [src\lib.rs:274:17] files_vec = [
+                    "M",
+                    "auto-git/src/lib.rs",
+                    "??",
+                    "auto-git/Cargo.lock",
+                ]
+                */
+                /*
+                Alternativa ancora più efficiente: tuple_windows (con itertools)
+                Se vuoi evitare del tutto di creare il primo Vec intermedio e lavorare in modo puramente 
+                "lazy" (pigro), potresti usare la libreria itertools, ma restando sulle funzioni standard 
+                di Rust, la soluzione sotto è la più leggibile.
+                */
+                *untracked_files_vec = outputstr
+                    .split_whitespace()
+                    .collect::<Vec<&str>>()
+                    .windows(2)
+                    .filter(|untracked_char| untracked_char[0] == "??")
+                    .map(|file| (false, file[1].to_string()))
+                    .collect();
+                
+                // dbg!(untracked_files_vec);
+
+                Ok(())
+            },
+            Err(err) => {
+                error!(target: "lib", "{err}");
+                error::<Okay>(
+                    &format!("Could not complete status, check your internet connection or the selected project path\n{err}"))
+                    .show()
+                    .unwrap();
+                Err(err)
+            }
+        }
+    } else {
+        error!(target: "lib", "project path not selected");
+        Err(Error::Io(io::Error::new(io::ErrorKind::NotFound, "path file not set!")))
+    }
+}
+
+pub fn lib_git_add(project_path: &Option<PathBuf>, untracked_files_vec: &Vec<(bool, String)>) -> Result<(), Error> {
+    info!("adding untracked files files");
+
+    if let Some(project_path) = project_path {        
+        let mut files_to_add = untracked_files_vec.iter()
+            .filter(|(to_add, _)| *to_add == true).map(|(_, file)| file.as_str()).collect::<Vec<&str>>();
+        
+        files_to_add.insert(0, "add");
+        
+        dbg!(&files_to_add);
+
+        match git(&files_to_add, Some(project_path.as_path())) {
+            Ok(_) => {
+                info!("files added to commit");
+                Ok(())
+            },
+            Err(err) => {
+                error!(target: "lib", "{err}");
+                error::<Okay>(
+                    &format!("Could not add files to commit, check your internet connection or the selected project path\n{err}"))
+                    .show()
+                    .unwrap();
+                Err(err)
+            }
+        }
+    } else {
+        error!(target: "lib", "project path not selected");
+        Err(Error::Io(io::Error::new(io::ErrorKind::NotFound, "path file not set!")))
+    }
+
 }
