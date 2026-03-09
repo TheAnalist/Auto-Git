@@ -71,9 +71,6 @@ fn back_align_project_n_stage_changes(
                 // info!("searching");
                 *status = AppState::Searching;
 
-
-                repaint.request_repaint();
-
                 let mut files_staged = shared_data.files_staged.lock().unwrap();
 
                 // --------------------------- Stage files per il push ---------------------------
@@ -102,14 +99,11 @@ fn back_align_project_n_stage_changes(
                 }
                 // -------------------------------------------------------------------------------
             }
+            repaint.request_repaint();
             {
                 let mut status = shared_data.state.lock().unwrap();
-
-                repaint.request_repaint();
                 
                 if matches!(*status, AppState::Exit) { break; }
-
-                repaint.request_repaint();
                 
                 if !lib_check_internet() {
                     // sleep(POLL_INTERVAL);
@@ -303,6 +297,7 @@ impl AutoGitApp {
         if let Ok(mut state) = self.shared_data.state.try_lock() {
             in_error_state = matches!(*state, AppState::Error(_));
             *state = AppState::Success("Changes ignored successfully".to_string());
+            // self.idle();
         }
 
         if in_error_state { self.shared_data.condvar.notify_all(); }
@@ -438,6 +433,9 @@ impl AutoGitApp {
 
                             if in_error_state { self.shared_data.condvar.notify_all(); }
                         }
+
+                        self.commit_input_expanded = false;
+                        self.untracked_files_expanded = false;
                     } else {
                         {
                             if let Ok(mut state) = self.shared_data.state.try_lock() {
@@ -459,6 +457,8 @@ impl AutoGitApp {
                 {
                     info!("resetting state");
                     *self.shared_data.state.lock().unwrap() = AppState::Idle;
+                    self.commit_input_expanded = false;
+                    self.untracked_files_expanded = false;
                 }
             });
         });

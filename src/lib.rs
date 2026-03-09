@@ -1,10 +1,11 @@
 use win_msgbox::{error, Okay};
 use rfd::FileDialog;
 use powershell_script::{PsScript, PsScriptBuilder};
-use std::{fmt,fmt::Write, fs, net::TcpStream, path::{Path, PathBuf}, process, io};
+use std::{fmt::{self, Write}, fs, io, net::TcpStream, os::windows::process::CommandExt, path::{Path, PathBuf}, process};
 pub use log::*;
 
 pub const MAX_TERMINAL_LENGHT :usize = 1000;
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 const GIT_PROJECT_PATH    :&str = ".git-project"; 
 const STARTUP_DIR         :&str = "($env:APPDATA + '\\Auto-Git\\')";
@@ -51,6 +52,7 @@ impl From<io::Error> for Error {
 
 fn git(args: &[&str], working_dir: Option<&Path>) -> Result<process::Output, Error> {
     let mut command = process::Command::new("git");
+    command.creation_flags(CREATE_NO_WINDOW);
     if let Some(working_dir) = working_dir {
         command.current_dir(working_dir);
     }
@@ -89,14 +91,7 @@ pub fn lib_pwsh_psscript_builder() -> PsScript {
         .build()
 }
 
-// impl PsScriptEntity {
-//     pub fn new() -> Self {
-//         Self { 
-//             entity: lib_pwsh_psscript_builder()
-//         }
-//     }    
-// }
-
+#[allow(unused)]
 pub fn lib_check_internet() -> bool {
     info!(target: "lib", "checking internet connection");
 
@@ -113,6 +108,7 @@ pub fn lib_check_internet() -> bool {
     }
 }
 
+#[allow(unused)]
 pub fn lib_get_git_project_file_path() -> Option<String> {
     let ps: PsScript = lib_pwsh_psscript_builder();
     let mut path: String = String::with_capacity(STARTUP_DIR.len() + GIT_PROJECT_PATH.len());
@@ -131,6 +127,7 @@ pub fn lib_get_git_project_file_path() -> Option<String> {
     }
 }
 // #[inline]
+#[allow(unused)]
 pub fn lib_get_project_path() -> Option<PathBuf> {
     info!(target: "lib", "getting git project path");
 
@@ -181,6 +178,7 @@ pub fn lib_get_project_path() -> Option<PathBuf> {
 }
 
 /// aggigorna il progetto locale utilizzando "git remote update" e ritorna lo status
+#[allow(unused)]
 pub fn lib_git_update_local(project_path: &Option<PathBuf>) -> Option<String> {
     // Handle PathBuf None error
     if let Some(pb) = project_path  {
@@ -214,6 +212,7 @@ pub fn lib_git_update_local(project_path: &Option<PathBuf>) -> Option<String> {
     }
 }
 
+#[allow(unused)]
 pub fn lib_git_status(project_path: &Option<PathBuf>) -> Option<String> {
     if let Some(pb) = project_path {
         info!(target: "lib", "getting project status");
@@ -230,6 +229,7 @@ pub fn lib_git_status(project_path: &Option<PathBuf>) -> Option<String> {
     None
 }
 
+#[allow(unused)]
 pub fn lib_check_remote_ahead(status_string: String) -> bool {
     info!(target: "lib", "check remote ahead");
 
@@ -242,6 +242,7 @@ pub fn lib_check_remote_ahead(status_string: String) -> bool {
     }
 }
 
+#[allow(unused)]
 pub fn lib_make_pull(project_path: &Option<PathBuf>, terminal_output: &mut Vec<String>) -> Result<(), Error> {
     info!(target: "lib", "pulling from remote repository");
 
@@ -274,6 +275,7 @@ pub fn lib_make_pull(project_path: &Option<PathBuf>, terminal_output: &mut Vec<S
     
 }
 
+#[allow(unused)]
 pub fn lib_stage_changes(project_path: &Option<PathBuf>, files_staged: &mut Vec<String>) -> Result<ChangesStaged, Error>{
     info!(target: "lib","staging changes for commit");
 
@@ -296,16 +298,19 @@ pub fn lib_stage_changes(project_path: &Option<PathBuf>, files_staged: &mut Vec<
                 "lazy" (pigro), potresti usare la libreria itertools, ma restando sulle funzioni standard 
                 di Rust, la soluzione sotto è la più leggibile.
                 */
-                let mut modified_files_vec: Vec<&str> = outputstr
-                    .split_whitespace()
-                    .collect::<Vec<&str>>()
-                    .windows(2)
-                    .filter(|modified_char| modified_char[0] == "M" || modified_char[0] == "MM")
-                    .map(|file| file[1])
+                let mut modified_files_vec: Vec<&str> = outputstr.split_terminator("\n")
+                    .filter(|f| f.contains("M ") || f.contains("MM ") || f.contains(" M"))
+                    .map(|m_file| m_file.split_at(3).1)
                     .collect();
-                
-                // dbg!(&files_staged);
-                // dbg!(&modified_files_vec);
+
+
+                // let mut modified_files_vec: Vec<&str> = outputstr
+                //     .split_whitespace()
+                //     .collect::<Vec<&str>>()
+                //     .windows(2)
+                //     .filter(|modified_char| modified_char[0] == "M" || modified_char[0] == "MM")
+                //     .map(|file| file[1])
+                //     .collect();
 
                 // evita di fare il git add se i files sono uguali
                 if modified_files_vec.iter().all(|file | files_staged.contains(&file.to_string())) {
@@ -351,6 +356,7 @@ pub fn lib_stage_changes(project_path: &Option<PathBuf>, files_staged: &mut Vec<
     Ok(ChangesStaged::Ingored)
 }
 
+#[allow(unused)]
 pub fn lib_make_push(project_path: &Option<PathBuf>, commit_message: &String) -> Result<(), Error> {
     if let Some(project_path) = project_path {
         // commit
@@ -390,6 +396,7 @@ pub fn lib_make_push(project_path: &Option<PathBuf>, commit_message: &String) ->
     }
 }
 
+#[allow(unused)]
 pub fn lib_get_untracked_files(project_path: &Option<PathBuf>, untracked_files_vec: &mut Vec<(bool, String)>) -> Result<(), Error>{
     info!(target: "lib", "getting untracked files");
 
@@ -412,12 +419,11 @@ pub fn lib_get_untracked_files(project_path: &Option<PathBuf>, untracked_files_v
                 "lazy" (pigro), potresti usare la libreria itertools, ma restando sulle funzioni standard 
                 di Rust, la soluzione sotto è la più leggibile.
                 */
-                *untracked_files_vec = outputstr
-                    .split_whitespace()
-                    .collect::<Vec<&str>>()
-                    .windows(2)
-                    .filter(|untracked_char| untracked_char[0] == "??")
-                    .map(|file| (false, file[1].to_string()))
+                *untracked_files_vec = outputstr.split_terminator("\n")
+                    .filter(|f| f.contains("?? "))
+                    .map(|m_file| 
+                        (false, m_file.split_at(3).1.to_string())
+                    )
                     .collect();
                 
                 // dbg!(untracked_files_vec);
@@ -439,6 +445,7 @@ pub fn lib_get_untracked_files(project_path: &Option<PathBuf>, untracked_files_v
     }
 }
 
+#[allow(unused)]
 pub fn lib_git_add(project_path: &Option<PathBuf>, untracked_files_vec: &Vec<(bool, String)>) -> Result<(), Error> {
     info!("adding untracked files files");
 
@@ -447,8 +454,6 @@ pub fn lib_git_add(project_path: &Option<PathBuf>, untracked_files_vec: &Vec<(bo
             .filter(|(to_add, _)| *to_add == true).map(|(_, file)| file.as_str()).collect::<Vec<&str>>();
         
         files_to_add.insert(0, "add");
-        
-        dbg!(&files_to_add);
 
         match git(&files_to_add, Some(project_path.as_path())) {
             Ok(_) => {
