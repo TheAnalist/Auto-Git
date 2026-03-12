@@ -1,16 +1,22 @@
 // Auto-Git UI
 use auto_git::*;
+use core::f32;
 use eframe::egui::{self, Color32, RichText};
 use rfd::FileDialog;
-use core::f32;
-use std::{fs::{self}, path::PathBuf, sync::{Arc, Condvar, Mutex}, thread::{self, sleep}, time::Duration};
+use std::{
+    fs::{self},
+    path::PathBuf,
+    sync::{Arc, Condvar, Mutex},
+    thread::{self, sleep},
+    time::Duration,
+};
 // use log::*;
 // use crate::lib::*;
 
 const OK_TICK: &str = "\u{2714}";
 const ERROR_TICK: &str = "❌";
 
-const BUTTON_HEIGHT       :f32   = 50.0;
+const BUTTON_HEIGHT: f32 = 50.0;
 // const MAX_TERMINAL_LENGHT :usize = 1000;
 
 /// Stato dell'applicazione
@@ -21,46 +27,42 @@ enum AppState {
     Success(String),
     Error(String),
     Searching,
-    Exit
+    Exit,
 }
 
 /// Dati condivisi tra il thread principale e il thread di allineamento del progetto
 pub struct SharedAppData {
-    state:           Arc<Mutex<AppState>>,
-    condvar:         Arc<Condvar>,
-    project_path:    Arc<Mutex<Option<PathBuf>>>,
-    status_output:   Arc<Mutex<Option<String>>>,
+    state: Arc<Mutex<AppState>>,
+    condvar: Arc<Condvar>,
+    project_path: Arc<Mutex<Option<PathBuf>>>,
+    status_output: Arc<Mutex<Option<String>>>,
     /// Output del terminale (log delle operazioni)
     terminal_output: Arc<Mutex<Vec<String>>>,
-    files_staged:    Arc<Mutex<Vec<String>>>
+    files_staged: Arc<Mutex<Vec<String>>>,
 }
 
 /// Struttura principale dell'applicazione
 pub struct AutoGitApp {
     /// Stato corrente dell'applicazione
-    shared_data:              SharedAppData,
+    shared_data: SharedAppData,
     /// Indica se il pannello terminale è aperto
-    terminal_expanded:        bool,
+    terminal_expanded: bool,
     /// Altezza del pannello terminale quando espanso
-    terminal_height:          f32,
-    commit_input_expanded:    bool,
-    commit_message:           String,
-    complete_push:            bool,
-    advanced_git_options:     bool,
-    untracked_files:          Vec<(bool, String)>,
+    terminal_height: f32,
+    commit_input_expanded: bool,
+    commit_message: String,
+    complete_push: bool,
+    advanced_git_options: bool,
+    untracked_files: Vec<(bool, String)>,
     untracked_files_expanded: bool,
-    untracked_files_to_add:   bool,
+    untracked_files_to_add: bool,
     //                        (0: to_restore, 1: path, 2: staged)
-    restore_files:            Vec<(bool, String, bool)>,
-    restore_files_expanded:   bool,
-    files_to_restore:         bool,
-    
+    restore_files: Vec<(bool, String, bool)>,
+    restore_files_expanded: bool,
+    files_to_restore: bool,
 }
 
-fn back_align_project_n_stage_changes(
-    shared_data: SharedAppData,
-    repaint: egui::Context,
-) { 
+fn back_align_project_n_stage_changes(shared_data: SharedAppData, repaint: egui::Context) {
     info!("starting checking thread");
     thread::spawn(move || {
         sleep(Duration::from_secs(1));
@@ -69,10 +71,12 @@ fn back_align_project_n_stage_changes(
         loop {
             {
                 let mut status = shared_data.state.lock().unwrap();
-                
-                while matches!(*status, AppState::Processing(_)) || matches!(*status, AppState::Error(_)){ 
+
+                while matches!(*status, AppState::Processing(_))
+                    || matches!(*status, AppState::Error(_))
+                {
                     status = shared_data.condvar.wait(status).unwrap();
-                };
+                }
                 // info!("searching");
                 *status = AppState::Searching;
 
@@ -80,26 +84,37 @@ fn back_align_project_n_stage_changes(
 
                 // --------------------------- Stage files per il push ---------------------------
                 if files_staged.is_empty() {
-                    shared_data.terminal_output.lock().unwrap().push("▶ Adding modified files to commit...".to_string());
+                    shared_data
+                        .terminal_output
+                        .lock()
+                        .unwrap()
+                        .push("▶ Adding modified files to commit...".to_string());
                 }
 
                 // stage modified files for commit
                 match lib_stage_changes(
                     &shared_data.project_path.lock().unwrap(),
-                    &mut files_staged
-                )
-                {
+                    &mut files_staged,
+                ) {
                     Ok(changes_staged) => {
                         if matches!(changes_staged, ChangesStaged::Staged) {
-                            *status = AppState::Success("Files successfully added to the commit".to_string());
-                            shared_data.terminal_output.lock().unwrap().push(
-                                format!("{OK_TICK} Files successfully added to the commit! ({})", files_staged.join(", "))
+                            *status = AppState::Success(
+                                "Files successfully added to the commit".to_string(),
                             );
+                            shared_data.terminal_output.lock().unwrap().push(format!(
+                                "{OK_TICK} Files successfully added to the commit! ({})",
+                                files_staged.join(", ")
+                            ));
                         }
-                    },
+                    }
                     Err(_) => {
-                        *status = AppState::Error("Error during file staging execution".to_string());
-                        shared_data.terminal_output.lock().unwrap().push(format!("{ERROR_TICK} Error during file staging execution"));
+                        *status =
+                            AppState::Error("Error during file staging execution".to_string());
+                        shared_data
+                            .terminal_output
+                            .lock()
+                            .unwrap()
+                            .push(format!("{ERROR_TICK} Error during file staging execution"));
                     }
                 }
                 // -------------------------------------------------------------------------------
@@ -107,12 +122,17 @@ fn back_align_project_n_stage_changes(
             repaint.request_repaint();
             {
                 let status = shared_data.state.lock().unwrap();
-                
-                if matches!(*status, AppState::Exit) { break; }
-                
+
+                if matches!(*status, AppState::Exit) {
+                    break;
+                }
+
                 if !lib_check_internet() {
                     // sleep(POLL_INTERVAL);
-                    let _ = shared_data.condvar.wait_timeout(status, POLL_INTERVAL).unwrap();
+                    let _ = shared_data
+                        .condvar
+                        .wait_timeout(status, POLL_INTERVAL)
+                        .unwrap();
                     continue;
                 }
             }
@@ -123,59 +143,72 @@ fn back_align_project_n_stage_changes(
                 let mut status = shared_data.state.lock().unwrap();
 
                 // status
-                *shared_data.status_output.lock().unwrap() = lib_git_update_local(&shared_data.project_path.lock().unwrap());
-                
+                *shared_data.status_output.lock().unwrap() =
+                    lib_git_update_local(&shared_data.project_path.lock().unwrap());
+
                 // check remote ahead and pull
                 if let Some(out) = shared_data.status_output.lock().unwrap().clone() {
                     if lib_check_remote_ahead(out) {
                         match lib_make_pull(
-                            &shared_data.project_path.lock().unwrap(), 
-                            &mut shared_data.terminal_output.lock().unwrap()
-                        )
-                        {
+                            &shared_data.project_path.lock().unwrap(),
+                            &mut shared_data.terminal_output.lock().unwrap(),
+                        ) {
                             Ok(_) => {
-                                *status = AppState::Success("Pull completed successfully".to_string());
-                                
+                                *status =
+                                    AppState::Success("Pull completed successfully".to_string());
+
                                 // if let Ok(mut terminal_output) = shared_data.terminal_output.try_lock() {
                                 //     terminal_output.push(format!("{OK_TICK} Pull completato con successo!"));
-                                // } 
-                                
+                                // }
                             }
                             Err(_) => {
                                 *status = AppState::Error("Error in pull operation".to_string());
-                               
+
                                 // if let Ok(mut terminal_output) = shared_data.terminal_output.try_lock() {
                                 //     terminal_output.push(format!("{ERROR_TICK} Errore nell'operzione di pull"));
                                 // }
                             }
-                         }
-
+                        }
                     }
                 } else {
                     if shared_data.project_path.lock().unwrap().is_none() {
-                        *status = AppState::Error("Configure the project path from the menu 'Set Project'".to_string());
-                        shared_data.terminal_output.lock().unwrap().push(format!("{ERROR_TICK} Error executing the status command: Set the project path"));
+                        *status = AppState::Error(
+                            "Configure the project path from the menu 'Set Project'".to_string(),
+                        );
+                        shared_data.terminal_output.lock().unwrap().push(format!(
+                            "{ERROR_TICK} Error executing the status command: Set the project path"
+                        ));
                     } else {
                         *status = AppState::Error("Status incomplete".to_string());
-                        shared_data.terminal_output.lock().unwrap().push(format!("{ERROR_TICK} Error executing the status command"));
+                        shared_data
+                            .terminal_output
+                            .lock()
+                            .unwrap()
+                            .push(format!("{ERROR_TICK} Error executing the status command"));
                     }
                     continue;
                 }
 
                 // se dopo le operazioni
-                if matches!(*status, AppState::Processing(_)) { continue; }   
-
+                if matches!(*status, AppState::Processing(_)) {
+                    continue;
+                }
             }
 
             repaint.request_repaint();
-            
+
             {
                 let status = shared_data.state.lock().unwrap();
 
-                if matches!(*status, AppState::Processing(_)) { continue; }
+                if matches!(*status, AppState::Processing(_)) {
+                    continue;
+                }
 
                 // sleep(POLL_INTERVAL);
-                let _ = shared_data.condvar.wait_timeout(status, POLL_INTERVAL).unwrap(); 
+                let _ = shared_data
+                    .condvar
+                    .wait_timeout(status, POLL_INTERVAL)
+                    .unwrap();
             }
         }
     });
@@ -191,17 +224,17 @@ impl AutoGitApp {
         let files_staged = Arc::new(Mutex::new(Vec::new()));
 
         back_align_project_n_stage_changes(
-            SharedAppData { 
-                state: Arc::clone(&state), 
-                condvar: Arc::clone(&condvar), 
+            SharedAppData {
+                state: Arc::clone(&state),
+                condvar: Arc::clone(&condvar),
                 project_path: Arc::clone(&project_path),
                 status_output: Arc::clone(&status_output),
                 terminal_output: Arc::clone(&terminal_output),
-                files_staged: Arc::clone(&files_staged)
+                files_staged: Arc::clone(&files_staged),
             },
             cc.egui_ctx.clone(),
         );
-        
+
         Self {
             shared_data: SharedAppData {
                 state,
@@ -209,9 +242,9 @@ impl AutoGitApp {
                 project_path,
                 status_output,
                 terminal_output,
-                files_staged
+                files_staged,
             },
-            terminal_expanded : false,
+            terminal_expanded: false,
             terminal_height: 200.0,
             commit_input_expanded: false,
             commit_message: String::new(),
@@ -222,7 +255,7 @@ impl AutoGitApp {
             untracked_files_to_add: false,
             restore_files: Vec::new(),
             restore_files_expanded: false,
-            files_to_restore: false
+            files_to_restore: false,
         }
     }
 
@@ -230,7 +263,7 @@ impl AutoGitApp {
         *self.shared_data.state.lock().unwrap() = AppState::Processing(name.to_string());
         self.add_terminal_output(format!("▶ Starting operation {name}..."));
         // self.shared_data.condvar.notify_all(); // il worker esce dal wait_timeout e va al punto 1
-        
+
         // repaint.request_repaint();
     }
 
@@ -254,44 +287,59 @@ impl AutoGitApp {
     fn handle_push(&mut self) {
         info!("handling status");
         self.begin_operation("Push");
-        
+
         self.commit_input_expanded = true;
         self.add_terminal_output("\u{2714} Starting Push operation".to_string());
 
         if self.complete_push {
             let mut in_error_state: bool = false;
 
-            match lib_make_push(&self.shared_data.project_path.lock().unwrap(), &self.commit_message) {
+            match lib_make_push(
+                &self.shared_data.project_path.lock().unwrap(),
+                &self.commit_message,
+            ) {
                 Ok(_) => {
                     if let Ok(mut state) = self.shared_data.state.try_lock() {
                         in_error_state = matches!(*state, AppState::Error(_));
                         *state = AppState::Success("Push completed successfully".to_string());
                     }
 
-                    self.shared_data.terminal_output.lock().unwrap().push(format!("{OK_TICK} Push completed successfully"));
-                    
+                    self.shared_data
+                        .terminal_output
+                        .lock()
+                        .unwrap()
+                        .push(format!("{OK_TICK} Push completed successfully"));
+
                     self.shared_data.files_staged.lock().unwrap().clear();
-                    
-                    if in_error_state { self.shared_data.condvar.notify_all(); }
-                },
-                Err(err) => {
-                    match err {
-                        Error::Io(_) => {
-                            *self.shared_data.state.lock().unwrap() = AppState::Error("Project path not selected".to_string());
-                            self.shared_data.terminal_output.lock().unwrap().push(format!("{ERROR_TICK} Configure the project path from the menu 'Set Project'"));
-                        },
-                        _ => {
-                            *self.shared_data.state.lock().unwrap() = AppState::Error("Operation incomplete due to an error".to_string());
-                            self.shared_data.terminal_output.lock().unwrap().push(format!("{ERROR_TICK} Operation incomplete due to an error: {}", err));
-                        }
+
+                    if in_error_state {
+                        self.shared_data.condvar.notify_all();
                     }
                 }
+                Err(err) => match err {
+                    Error::Io(_) => {
+                        *self.shared_data.state.lock().unwrap() =
+                            AppState::Error("Project path not selected".to_string());
+                        self.shared_data.terminal_output.lock().unwrap().push(format!("{ERROR_TICK} Configure the project path from the menu 'Set Project'"));
+                    }
+                    _ => {
+                        *self.shared_data.state.lock().unwrap() =
+                            AppState::Error("Operation incomplete due to an error".to_string());
+                        self.shared_data
+                            .terminal_output
+                            .lock()
+                            .unwrap()
+                            .push(format!(
+                                "{ERROR_TICK} Operation incomplete due to an error: {}",
+                                err
+                            ));
+                    }
+                },
             }
-        
+
             self.commit_input_expanded = false;
             self.complete_push = false;
         }
-        
     }
 
     /// Operazione di Ignora
@@ -302,23 +350,25 @@ impl AutoGitApp {
         self.begin_operation("Ignore");
         sleep(Duration::from_millis(50));
         self.shared_data.files_staged.lock().unwrap().clear();
-        
+
         self.add_terminal_output("\u{2714} Project changes discarded".to_string());
-        
+
         if let Ok(mut state) = self.shared_data.state.try_lock() {
             in_error_state = matches!(*state, AppState::Error(_));
             *state = AppState::Success("Changes ignored successfully".to_string());
             // self.idle();
         }
 
-        if in_error_state { self.shared_data.condvar.notify_all(); }
+        if in_error_state {
+            self.shared_data.condvar.notify_all();
+        }
     }
 
     /// Operazione di Status
     fn handle_status(&mut self) {
         info!("handling status");
         self.begin_operation("Status");
-        
+
         // se non c'è connessione a internet
         {
             let mut status_output = self.shared_data.status_output.lock().unwrap();
@@ -343,13 +393,18 @@ impl AutoGitApp {
                 }
 
                 self.add_terminal_output("\u{2714} Repository status verified!".to_string());
-                
-                if in_error_state { self.shared_data.condvar.notify_all(); }
+
+                if in_error_state {
+                    self.shared_data.condvar.notify_all();
+                }
             }
             None => {
-                self.add_terminal_output("Error: Could not perform the status operation".to_string());
+                self.add_terminal_output(
+                    "Error: Could not perform the status operation".to_string(),
+                );
                 self.terminal_expanded = true;
-                *self.shared_data.state.lock().unwrap() = AppState::Error("Error in status operation execution".to_string());  
+                *self.shared_data.state.lock().unwrap() =
+                    AppState::Error("Error in status operation execution".to_string());
             }
         }
     }
@@ -362,51 +417,76 @@ impl AutoGitApp {
         // show untracked files (ui checkbox)
         if !self.untracked_files_expanded && !self.untracked_files_to_add {
             match lib_get_untracked_files(
-                &self.shared_data.project_path.lock().unwrap().clone(), 
-                &mut self.untracked_files
+                &self.shared_data.project_path.lock().unwrap().clone(),
+                &mut self.untracked_files,
             ) {
                 Ok(_) => {
-                    self.shared_data.terminal_output.lock().unwrap().push(format!("{OK_TICK} 'Untracked files' found!"));
+                    self.shared_data
+                        .terminal_output
+                        .lock()
+                        .unwrap()
+                        .push(format!("{OK_TICK} 'Untracked files' found!"));
                     self.untracked_files_expanded = true;
-                },
-                Err(err) => {
-                    match err {
-                        Error::Io(_) => {
-                            *self.shared_data.state.lock().unwrap() = AppState::Error("Project path not set".to_string());
-                            self.shared_data.terminal_output.lock().unwrap().push(format!("{ERROR_TICK} Configure the project path from the menu 'Set Project'"));
-                        },
-                        _ => {
-                            *self.shared_data.state.lock().unwrap() = AppState::Error("Add operation incomplete due to an error".to_string());
-                            self.shared_data.terminal_output.lock().unwrap().push(format!("{ERROR_TICK} Add operation errored: {}", err));
-                        }
-                    }
                 }
+                Err(err) => match err {
+                    Error::Io(_) => {
+                        *self.shared_data.state.lock().unwrap() =
+                            AppState::Error("Project path not set".to_string());
+                        self.shared_data.terminal_output.lock().unwrap().push(format!("{ERROR_TICK} Configure the project path from the menu 'Set Project'"));
+                    }
+                    _ => {
+                        *self.shared_data.state.lock().unwrap() =
+                            AppState::Error("Add operation incomplete due to an error".to_string());
+                        self.shared_data
+                            .terminal_output
+                            .lock()
+                            .unwrap()
+                            .push(format!("{ERROR_TICK} Add operation errored: {}", err));
+                    }
+                },
             }
         }
 
         if self.untracked_files_to_add {
-            match lib_git_add(&self.shared_data.project_path.lock().unwrap(), &self.untracked_files) {
+            match lib_git_add(
+                &self.shared_data.project_path.lock().unwrap(),
+                &self.untracked_files,
+            ) {
                 Ok(_) => {
-                    self.shared_data.terminal_output.lock().unwrap().push(format!("{OK_TICK} Files {} added to commit!", self.untracked_files.iter().filter(|(added, _)| added.eq(&true)).count()));
-                    *self.shared_data.state.lock().unwrap() = AppState::Success("Files added to commit successfully".to_string());
-                },
-                Err(err) => {
-                    match err {
-                        Error::Io(_) => {
-                            *self.shared_data.state.lock().unwrap() = AppState::Error("Project path not set".to_string());
-                            self.shared_data.terminal_output.lock().unwrap().push(format!("{ERROR_TICK} Configure the project path from the menu 'Set Project'"));
-                        },
-                        _ => {
-                            *self.shared_data.state.lock().unwrap() = AppState::Error("Add operation incomplete due to an error".to_string());
-                            self.shared_data.terminal_output.lock().unwrap().push(format!("{ERROR_TICK} Add operation errored: {}", err));
-                        }
-                    }
+                    self.shared_data
+                        .terminal_output
+                        .lock()
+                        .unwrap()
+                        .push(format!(
+                            "{OK_TICK} Files {} added to commit!",
+                            self.untracked_files
+                                .iter()
+                                .filter(|(added, _)| added.eq(&true))
+                                .count()
+                        ));
+                    *self.shared_data.state.lock().unwrap() =
+                        AppState::Success("Files added to commit successfully".to_string());
                 }
+                Err(err) => match err {
+                    Error::Io(_) => {
+                        *self.shared_data.state.lock().unwrap() =
+                            AppState::Error("Project path not set".to_string());
+                        self.shared_data.terminal_output.lock().unwrap().push(format!("{ERROR_TICK} Configure the project path from the menu 'Set Project'"));
+                    }
+                    _ => {
+                        *self.shared_data.state.lock().unwrap() =
+                            AppState::Error("Add operation incomplete due to an error".to_string());
+                        self.shared_data
+                            .terminal_output
+                            .lock()
+                            .unwrap()
+                            .push(format!("{ERROR_TICK} Add operation errored: {}", err));
+                    }
+                },
             }
         }
-
     }
-    
+
     /// Operazione di Restore dei files
     fn handle_restore(&mut self) {
         info!("handling restore");
@@ -414,46 +494,74 @@ impl AutoGitApp {
 
         if !self.restore_files_expanded && !self.files_to_restore {
             match lib_get_files_to_restore(
-                &self.shared_data.project_path.lock().unwrap().clone(), 
-                &mut self.restore_files
+                &self.shared_data.project_path.lock().unwrap().clone(),
+                &mut self.restore_files,
             ) {
                 Ok(_) => {
-                    self.shared_data.terminal_output.lock().unwrap().push(format!("{OK_TICK} Modified files to restore found!"));
+                    self.shared_data
+                        .terminal_output
+                        .lock()
+                        .unwrap()
+                        .push(format!("{OK_TICK} Modified files to restore found!"));
                     self.restore_files_expanded = true;
-                },
-                Err(err) => {
-                    match err {
-                        Error::Io(_) => {
-                            *self.shared_data.state.lock().unwrap() = AppState::Error("Project path not set".to_string());
-                            self.shared_data.terminal_output.lock().unwrap().push(format!("{ERROR_TICK} Configure the project path from the menu 'Set Project'"));
-                        },
-                        _ => {
-                            *self.shared_data.state.lock().unwrap() = AppState::Error("Restore operation incomplete due to an error".to_string());
-                            self.shared_data.terminal_output.lock().unwrap().push(format!("{ERROR_TICK} Restore operation errored: {}", err));
-                        }
-                    }
                 }
+                Err(err) => match err {
+                    Error::Io(_) => {
+                        *self.shared_data.state.lock().unwrap() =
+                            AppState::Error("Project path not set".to_string());
+                        self.shared_data.terminal_output.lock().unwrap().push(format!("{ERROR_TICK} Configure the project path from the menu 'Set Project'"));
+                    }
+                    _ => {
+                        *self.shared_data.state.lock().unwrap() = AppState::Error(
+                            "Restore operation incomplete due to an error".to_string(),
+                        );
+                        self.shared_data
+                            .terminal_output
+                            .lock()
+                            .unwrap()
+                            .push(format!("{ERROR_TICK} Restore operation errored: {}", err));
+                    }
+                },
             }
         }
 
         if self.files_to_restore {
-            match lib_git_restore(&self.shared_data.project_path.lock().unwrap(), &self.restore_files) {
+            match lib_git_restore(
+                &self.shared_data.project_path.lock().unwrap(),
+                &self.restore_files,
+            ) {
                 Ok(_) => {
-                    self.shared_data.terminal_output.lock().unwrap().push(format!("{OK_TICK} Files {} restored!", self.restore_files.iter().filter(|(restored, _, _)| restored.eq(&true)).count()));
-                    *self.shared_data.state.lock().unwrap() = AppState::Success("File(s) restored successfully".to_string());
-                },
-                Err(err) => {
-                    match err {
-                        Error::Io(_) => {
-                            *self.shared_data.state.lock().unwrap() = AppState::Error("Project path not set".to_string());
-                            self.shared_data.terminal_output.lock().unwrap().push(format!("{ERROR_TICK} Configure the project path from the menu 'Set Project'"));
-                        },
-                        _ => {
-                            *self.shared_data.state.lock().unwrap() = AppState::Error("Restore operation incomplete due to an error".to_string());
-                            self.shared_data.terminal_output.lock().unwrap().push(format!("{ERROR_TICK} Restore operation errored: {}", err));
-                        }
-                    }
+                    self.shared_data
+                        .terminal_output
+                        .lock()
+                        .unwrap()
+                        .push(format!(
+                            "{OK_TICK} Files {} restored!",
+                            self.restore_files
+                                .iter()
+                                .filter(|(restored, _, _)| restored.eq(&true))
+                                .count()
+                        ));
+                    *self.shared_data.state.lock().unwrap() =
+                        AppState::Success("File(s) restored successfully".to_string());
                 }
+                Err(err) => match err {
+                    Error::Io(_) => {
+                        *self.shared_data.state.lock().unwrap() =
+                            AppState::Error("Project path not set".to_string());
+                        self.shared_data.terminal_output.lock().unwrap().push(format!("{ERROR_TICK} Configure the project path from the menu 'Set Project'"));
+                    }
+                    _ => {
+                        *self.shared_data.state.lock().unwrap() = AppState::Error(
+                            "Restore operation incomplete due to an error".to_string(),
+                        );
+                        self.shared_data
+                            .terminal_output
+                            .lock()
+                            .unwrap()
+                            .push(format!("{ERROR_TICK} Restore operation errored: {}", err));
+                    }
+                },
             }
             self.files_to_restore = false;
             self.restore_files_expanded = false;
@@ -471,26 +579,33 @@ impl AutoGitApp {
                 if ui.button("Set Project").clicked() {
                     info!("setting new project path");
                     let mut project_path = self.shared_data.project_path.lock().unwrap();
-                    
+
                     if let Some(path) = FileDialog::new()
-                    .set_can_create_directories(true)
-                    // .set_directory(project_path.clone().unwrap_or(PathBuf::from("C:\\Users\\")))
-                    .pick_folder() 
+                        .set_can_create_directories(true)
+                        // .set_directory(project_path.clone().unwrap_or(PathBuf::from("C:\\Users\\")))
+                        .pick_folder()
                     {
                         *project_path = Some(path.clone());
 
                         {
-                            let mut terminal_output = self.shared_data.terminal_output.lock().unwrap();
+                            let mut terminal_output =
+                                self.shared_data.terminal_output.lock().unwrap();
                             let mut in_error_state: bool = false;
 
-                            terminal_output.push(format!("{OK_TICK} New project path set {}", path.display()));
-                            
+                            terminal_output
+                                .push(format!("{OK_TICK} New project path set {}", path.display()));
+
                             if let Ok(mut state) = self.shared_data.state.try_lock() {
                                 in_error_state = matches!(*state, AppState::Error(_));
-                                *state = AppState::Success(format!("New project path set {}", path.display()));
-                            }  
+                                *state = AppState::Success(format!(
+                                    "New project path set {}",
+                                    path.display()
+                                ));
+                            }
 
-                            if in_error_state { self.shared_data.condvar.notify_all(); }
+                            if in_error_state {
+                                self.shared_data.condvar.notify_all();
+                            }
                         }
 
                         self.commit_input_expanded = false;
@@ -499,17 +614,20 @@ impl AutoGitApp {
                         {
                             if let Ok(mut state) = self.shared_data.state.try_lock() {
                                 *state = AppState::Idle;
-                            }  
+                            }
                         }
                     }
-
                 }
-                
-                if ui.checkbox(&mut self.advanced_git_options, "Advanced Options").clicked() {
+
+                if ui
+                    .checkbox(&mut self.advanced_git_options, "Advanced Options")
+                    .clicked()
+                {
                     info!("advanced options visible: {}", self.advanced_git_options);
                 }
 
-                if ui.button("Reset")
+                if ui
+                    .button("Reset")
                     .highlight()
                     .on_hover_text("Erase errors by resetting the app state")
                     .clicked()
@@ -518,93 +636,85 @@ impl AutoGitApp {
                     *self.shared_data.state.lock().unwrap() = AppState::Idle;
                     self.commit_input_expanded = false;
                     self.untracked_files_expanded = false;
+                    self.restore_files_expanded = false;
+                    self.idle();
                 }
             });
         });
-        
     }
 
     /// Disegna i bottoni principali
     fn draw_buttons(&mut self, ui: &mut egui::Ui) {
-        let is_processing = matches!(*self.shared_data.state.lock().unwrap(), AppState::Processing(_));
+        let is_processing = matches!(
+            *self.shared_data.state.lock().unwrap(),
+            AppState::Processing(_)
+        );
         let files_staged_empty = self.shared_data.files_staged.lock().unwrap().is_empty();
 
         // Calcola la larghezza disponibile e dividi per 3 bottoni + spaziatura
         let available_width = ui.available_width() - 60.0; // 40px per margini, 20px per spacing
         let button_width = available_width / 3.0;
-        
+
         ui.add_space(20.0);
-        
+
         ui.horizontal(|ui| {
             ui.add_space(20.0);
-            
+
             // Bottone Push
             ui.add_enabled_ui(!is_processing && !files_staged_empty, |ui| {
-                let push_button = egui::Button::new(
-                    egui::RichText::new("🚀 Push")
-                        .size(18.0)
-                        .strong()
-                )
-                .min_size(egui::vec2(button_width, BUTTON_HEIGHT))
-                .fill(egui::Color32::from_rgb(76, 175, 80)); // Verde
-                
+                let push_button =
+                    egui::Button::new(egui::RichText::new("🚀 Push").size(18.0).strong())
+                        .min_size(egui::vec2(button_width, BUTTON_HEIGHT))
+                        .fill(egui::Color32::from_rgb(76, 175, 80)); // Verde
+
                 if ui.add(push_button).clicked() {
                     self.handle_push();
                 }
             });
-            
+
             ui.add_space(10.0);
-            
+
             // Bottone Ignora
             ui.add_enabled_ui(!is_processing, |ui| {
-                let ignore_button = egui::Button::new(
-                    egui::RichText::new("⏭ Ignore")
-                        .size(18.0)
-                        .strong()
-                )
-                .min_size(egui::vec2(button_width, BUTTON_HEIGHT))
-                .fill(egui::Color32::from_rgb(255, 152, 0)); // Arancione
-                
+                let ignore_button =
+                    egui::Button::new(egui::RichText::new("⏭ Ignore").size(18.0).strong())
+                        .min_size(egui::vec2(button_width, BUTTON_HEIGHT))
+                        .fill(egui::Color32::from_rgb(255, 152, 0)); // Arancione
+
                 if ui.add(ignore_button).clicked() {
                     self.handle_ignore();
                 }
             });
-            
+
             ui.add_space(10.0);
-            
+
             // Bottone Status
             ui.add_enabled_ui(!is_processing, |ui| {
-                let status_button = egui::Button::new(
-                    egui::RichText::new("📊 Status")
-                        .size(18.0)
-                        .strong()
-                )
-                .min_size(egui::vec2(button_width, BUTTON_HEIGHT))
-                .fill(egui::Color32::from_rgb(33, 150, 243)); // Blu
-                
+                let status_button =
+                    egui::Button::new(egui::RichText::new("📊 Status").size(18.0).strong())
+                        .min_size(egui::vec2(button_width, BUTTON_HEIGHT))
+                        .fill(egui::Color32::from_rgb(33, 150, 243)); // Blu
+
                 if ui.add(status_button).clicked() {
                     self.handle_status();
                 }
             });
-            
+
             ui.add_space(20.0);
         });
 
         ui.add_space(10.0);
-        
+
         if self.advanced_git_options {
             ui.horizontal(|ui| {
                 ui.add_space(20.0);
-                
+
                 ui.add_enabled_ui(!is_processing, |ui| {
-                    let add_button = egui::Button::new(
-                        egui::RichText::new("➕ Add")
-                            .size(18.0)
-                            .strong()
-                    )
-                    .min_size(egui::vec2(button_width, BUTTON_HEIGHT))
-                    .fill(egui::Color32::from_rgb(76, 130, 80));
-                    
+                    let add_button =
+                        egui::Button::new(egui::RichText::new("➕ Add").size(18.0).strong())
+                            .min_size(egui::vec2(button_width, BUTTON_HEIGHT))
+                            .fill(egui::Color32::from_rgb(76, 130, 80));
+
                     if ui.add(add_button).clicked() {
                         self.handle_add();
                     }
@@ -613,14 +723,11 @@ impl AutoGitApp {
                 ui.add_space(10.0);
 
                 ui.add_enabled_ui(!is_processing, |ui| {
-                    let restore_button = egui::Button::new(
-                        egui::RichText::new("🔁 Restore")
-                            .size(18.0)
-                            .strong()
-                    )
-                    .min_size(egui::vec2(button_width, BUTTON_HEIGHT))
-                    .fill(egui::Color32::from_rgb(255, 130, 0));
-                    
+                    let restore_button =
+                        egui::Button::new(egui::RichText::new("🔁 Restore").size(18.0).strong())
+                            .min_size(egui::vec2(button_width, BUTTON_HEIGHT))
+                            .fill(egui::Color32::from_rgb(255, 130, 0));
+
                     if ui.add(restore_button).clicked() {
                         self.handle_restore();
                     }
@@ -629,14 +736,11 @@ impl AutoGitApp {
                 ui.add_space(10.0);
 
                 ui.add_enabled_ui(!is_processing, |ui| {
-                    let clone_button = egui::Button::new(
-                        egui::RichText::new("📩 Clone")
-                            .size(18.0)
-                            .strong()
-                    )
-                    .min_size(egui::vec2(button_width, BUTTON_HEIGHT))
-                    .fill(egui::Color32::from_rgb(33, 110, 255)); // Blu
-                    
+                    let clone_button =
+                        egui::Button::new(egui::RichText::new("📩 Clone").size(18.0).strong())
+                            .min_size(egui::vec2(button_width, BUTTON_HEIGHT))
+                            .fill(egui::Color32::from_rgb(33, 110, 255)); // Blu
+
                     if ui.add(clone_button).clicked() {
                         self.handle_clone();
                     }
@@ -645,18 +749,21 @@ impl AutoGitApp {
                 ui.add_space(20.0);
             });
         }
-        
+
         ui.add_space(20.0);
     }
 
     /// Disegna l'indicatore di stato e lo spinner
     fn draw_status_indicator(&mut self, ui: &mut egui::Ui) {
-        let is_processing = matches!(*self.shared_data.state.lock().unwrap(), AppState::Processing(_));
+        let is_processing = matches!(
+            *self.shared_data.state.lock().unwrap(),
+            AppState::Processing(_)
+        );
         ui.add_space(10.0);
-        
+
         ui.horizontal(|ui| {
             ui.add_space(20.0);
-            
+
             let state = self.shared_data.state.lock().unwrap().clone();
 
             match state {
@@ -664,7 +771,7 @@ impl AutoGitApp {
                     ui.label(
                         egui::RichText::new("⚪ Waiting for operations...")
                             .size(14.0)
-                            .color(egui::Color32::GRAY)
+                            .color(egui::Color32::GRAY),
                     );
                 }
                 AppState::Processing(operation) => {
@@ -673,7 +780,7 @@ impl AutoGitApp {
                     ui.label(
                         egui::RichText::new(format!("⏳ Processing: {}", operation))
                             .size(14.0)
-                            .color(egui::Color32::from_rgb(33, 150, 243))
+                            .color(egui::Color32::from_rgb(33, 150, 243)),
                     );
                 }
                 AppState::Success(message) => {
@@ -681,7 +788,7 @@ impl AutoGitApp {
                         // egui::RichText::new(format!("✓ {}", message))
                         egui::RichText::new(format!("{OK_TICK} {}", message))
                             .size(14.0)
-                            .color(egui::Color32::from_rgb(76, 175, 80))
+                            .color(egui::Color32::from_rgb(76, 175, 80)),
                     );
                 }
                 AppState::Error(message) => {
@@ -689,16 +796,16 @@ impl AutoGitApp {
                         // egui::RichText::new(format!("✗ Errore: {}", message))
                         egui::RichText::new(format!("{ERROR_TICK} Error: {}", message))
                             .size(14.0)
-                            .color(egui::Color32::from_rgb(244, 67, 54))
+                            .color(egui::Color32::from_rgb(244, 67, 54)),
                     );
-                },
+                }
                 AppState::Searching => {
                     ui.spinner();
                     ui.add_space(5.0);
                     ui.label(
                         egui::RichText::new("Checking for changes...")
                             .size(14.0)
-                            .color(egui::Color32::from_rgb(33, 150, 243))
+                            .color(egui::Color32::from_rgb(33, 150, 243)),
                     );
                 }
                 _ => {}
@@ -709,14 +816,11 @@ impl AutoGitApp {
             // abort button
             if is_processing {
                 ui.add_enabled_ui(is_processing, |ui| {
-                    let abort_button = egui::Button::new(
-                            egui::RichText::new("❌ Abort")
-                                .size(15.0)
-                                .strong()
-                        )
-                        .min_size(egui::vec2(5.0, 30.0))
-                        .fill(egui::Color32::from_rgb(150, 30, 23));
-                    
+                    let abort_button =
+                        egui::Button::new(egui::RichText::new("❌ Abort").size(15.0).strong())
+                            .min_size(egui::vec2(5.0, 30.0))
+                            .fill(egui::Color32::from_rgb(150, 30, 23));
+
                     if ui.add(abort_button).clicked() {
                         self.idle();
                         self.commit_input_expanded = false;
@@ -729,45 +833,44 @@ impl AutoGitApp {
             }
         });
 
-        
         ui.add_space(10.0);
     }
 
     /// Disegna il pannello del terminale a scomparsa
     fn draw_terminal_panel(&mut self, _ui: &mut egui::Ui, ctx: &egui::Context) {
         // ui.separator();
-        
+
         // Intestazione del pannello con pulsante per espandere/comprimere
         egui::TopBottomPanel::bottom("Output Teminale Buttons")
             .exact_height(40.0)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                // ui.add_space(10.0);
-                
-                let arrow = if self.terminal_expanded { "🔽" } else { "▶" }; // ▼ e ►
-                let label_text = format!("{} Terminal Output", arrow);
-                // println!("{}", "\u{25BC}");
-                let response = ui.button(
-                    egui::RichText::new(label_text)
-                        .size(15.0)
-                        .strong()
-                );
+                    // ui.add_space(10.0);
 
-                if response.clicked(){
-                    self.terminal_expanded = !self.terminal_expanded;
-                }
-                
-                ui.add_space(10.0);
-                
-                // Bottone per pulire l'output
-                if self.terminal_expanded && ui.button("🗑 Clear").clicked() {
-                    self.shared_data.terminal_output.lock().unwrap().clear();
-                };
-                
-                // response
+                    let arrow = if self.terminal_expanded {
+                        "🔽"
+                    } else {
+                        "▶"
+                    }; // ▼ e ►
+                    let label_text = format!("{} Terminal Output", arrow);
+                    // println!("{}", "\u{25BC}");
+                    let response = ui.button(egui::RichText::new(label_text).size(15.0).strong());
+
+                    if response.clicked() {
+                        self.terminal_expanded = !self.terminal_expanded;
+                    }
+
+                    ui.add_space(10.0);
+
+                    // Bottone per pulire l'output
+                    if self.terminal_expanded && ui.button("🗑 Clear").clicked() {
+                        self.shared_data.terminal_output.lock().unwrap().clear();
+                    };
+
+                    // response
+                });
             });
-        });
-        
+
         // Pannello espandibile
         if self.terminal_expanded {
             // ui.separator();
@@ -775,18 +878,17 @@ impl AutoGitApp {
                 .resizable(true)
                 .default_height(self.terminal_height)
                 .show(ctx, |ui| {
-            
                     let available_height = ui.available_height();
-                
+
                     egui::ScrollArea::vertical()
                         .auto_shrink([false, false])
                         .max_height(available_height)
                         // .stick_to_bottom(true)
                         .show(ui, |ui| {
                             ui.add_space(5.0);
-                            
+
                             let output = self.shared_data.terminal_output.lock().unwrap();
-                            
+
                             if output.is_empty() {
                                 ui.horizontal(|ui| {
                                     ui.add_space(10.0);
@@ -794,35 +896,39 @@ impl AutoGitApp {
                                         egui::RichText::new("No output avaliable")
                                             .size(12.0)
                                             .color(egui::Color32::GRAY)
-                                            .italics()
+                                            .italics(),
                                     );
                                 });
                             } else {
                                 for line in output.iter() {
                                     ui.horizontal(|ui| {
                                         ui.add_space(10.0);
-                                        
+
                                         // Colora diversamente in base al tipo di messaggio
-                                        let color = if line.starts_with("\u{2714}") { // ✓
+                                        let color = if line.starts_with("\u{2714}") {
+                                            // ✓
                                             egui::Color32::from_rgb(76, 175, 80)
-                                        } else if line.starts_with(ERROR_TICK) || line.contains("error") || line.contains("Error") {
+                                        } else if line.starts_with(ERROR_TICK)
+                                            || line.contains("error")
+                                            || line.contains("Error")
+                                        {
                                             egui::Color32::from_rgb(244, 67, 54)
                                         } else if line.starts_with("▶") {
                                             egui::Color32::from_rgb(33, 150, 243)
                                         } else {
                                             egui::Color32::LIGHT_GRAY
                                         };
-                                        
+
                                         ui.label(
                                             egui::RichText::new(line)
                                                 .size(12.0)
                                                 .color(color)
-                                                .family(egui::FontFamily::Monospace)
+                                                .family(egui::FontFamily::Monospace),
                                         );
                                     });
                                 }
                             }
-                            
+
                             ui.add_space(5.0);
                         });
                 });
@@ -831,7 +937,7 @@ impl AutoGitApp {
 
     fn draw_commit_input(&mut self, ui: &mut egui::Ui) {
         // let mut binding = "Commit message";
-        
+
         if self.commit_input_expanded {
             // ui.label(RichText::new("Commit message").size(15.).strong());
 
@@ -844,7 +950,7 @@ impl AutoGitApp {
                         ui.vertical_centered(|ui| {
                             ui.heading(RichText::new("📋 Commit message").size(15.).strong())
                         });
-                        
+
                         ui.separator();
 
                         egui::ScrollArea::vertical().show(ui, |ui| {
@@ -859,23 +965,23 @@ impl AutoGitApp {
                             ui.add(editor);
                         });
 
-                        let push_button = egui::Button::new(
-                            egui::RichText::new("Push 🚀")
-                                .size(18.0)
-                                .strong()
-                        )
-                        .min_size(egui::vec2(200., BUTTON_HEIGHT))
-                        .fill(egui::Color32::from_rgb(76, 175, 80));
-        
+                        let push_button =
+                            egui::Button::new(egui::RichText::new("Push 🚀").size(18.0).strong())
+                                .min_size(egui::vec2(200., BUTTON_HEIGHT))
+                                .fill(egui::Color32::from_rgb(76, 175, 80));
+
                         if ui.add(push_button).clicked() {
-                            self.add_terminal_output(format!("▶ Committing elements with message: '{}'", self.commit_message));
+                            self.add_terminal_output(format!(
+                                "▶ Committing elements with message: '{}'",
+                                self.commit_message
+                            ));
                             self.complete_push = true;
                             self.handle_push();
                         }
                     })
             });
             // ui.vertical_centered(|ui| {
-                
+
             // });
         }
     }
@@ -885,7 +991,8 @@ impl AutoGitApp {
             ui.vertical_centered(|ui| {
                 ui.set_max_width(ui.available_width() - 60.0);
 
-                let num_col = (ui.available_width() - 60.0) / (10.0 * self.untracked_files.len() as f32);
+                let num_col =
+                    (ui.available_width() - 60.0) / (10.0 * self.untracked_files.len() as f32);
                 // println!("{num_col}");
 
                 egui::Frame::group(ui.style())
@@ -894,7 +1001,7 @@ impl AutoGitApp {
                         ui.vertical_centered(|ui| {
                             ui.heading(RichText::new("📂 Add files").size(15.).strong())
                         });
-                        
+
                         ui.separator();
 
                         egui::Grid::new("files_grid")
@@ -902,50 +1009,47 @@ impl AutoGitApp {
                             .spacing([20.0, 15.0])
                             .striped(true)
                             .show(ui, |ui| {
-                                for (index, untracked_file) in self.untracked_files.iter_mut().enumerate() {
+                                for (index, untracked_file) in
+                                    self.untracked_files.iter_mut().enumerate()
+                                {
                                     ui.checkbox(&mut untracked_file.0, untracked_file.1.clone());
-                                    
+
                                     if (index + 1) % num_col.round().floor() as usize == 0 {
                                         ui.end_row();
                                     }
                                 }
                             });
-                        
-                        ui.add_space(30.0);    
-                        
-                        let all_button = egui::Button::new(
-                            egui::RichText::new("All")
-                                .size(13.0)
-                                .strong()
-                        )
-                        .min_size(egui::vec2(30., 20.))
-                        .fill(egui::Color32::from_rgb(90, 110, 100));
-                
+
+                        ui.add_space(30.0);
+
+                        let all_button =
+                            egui::Button::new(egui::RichText::new("All").size(13.0).strong())
+                                .min_size(egui::vec2(30., 20.))
+                                .fill(egui::Color32::from_rgb(90, 110, 100));
+
                         let add_button = egui::Button::new(
-                            egui::RichText::new("Add")
-                                .size(13.0)
-                                .strong()
-                                .heading()
+                            egui::RichText::new("Add").size(13.0).strong().heading(),
                         )
                         .min_size(egui::vec2(30., 20.))
                         .fill(egui::Color32::from_rgb(76, 190, 80));
-                        
+
                         ui.horizontal(|ui| {
                             ui.add_space(ui.available_width() / 2.0 - 45.0);
                             if ui.add(all_button).clicked() {
-                                self.untracked_files.iter_mut().for_each(|(to_add, _)| *to_add = true);
+                                self.untracked_files
+                                    .iter_mut()
+                                    .for_each(|(to_add, _)| *to_add = true);
                             }
-                            
+
                             ui.add_space(15.0);
-        
+
                             if ui.add(add_button).clicked() {
                                 self.untracked_files_to_add = true;
                                 self.untracked_files_expanded = false;
                                 self.handle_add();
                             }
-                        });                
+                        });
                     });
-                    
             });
         }
     }
@@ -955,7 +1059,8 @@ impl AutoGitApp {
             ui.vertical_centered(|ui| {
                 ui.set_max_width(ui.available_width() - 100.0);
 
-                let num_col = (ui.available_width() - 100.0) / (10.0 * self.restore_files.len() as f32);
+                let num_col =
+                    (ui.available_width() - 100.0) / (10.0 * self.restore_files.len() as f32);
                 // println!("{num_col}");
 
                 egui::Frame::group(ui.style())
@@ -964,7 +1069,7 @@ impl AutoGitApp {
                         ui.vertical_centered(|ui| {
                             ui.heading(RichText::new("⏮ Restore files").size(15.).strong())
                         });
-                        
+
                         ui.separator();
 
                         egui::Grid::new("files_grid")
@@ -972,50 +1077,47 @@ impl AutoGitApp {
                             .spacing([20.0, 15.0])
                             .striped(true)
                             .show(ui, |ui| {
-                                for (index, restore_file) in self.restore_files.iter_mut().enumerate() {
+                                for (index, restore_file) in
+                                    self.restore_files.iter_mut().enumerate()
+                                {
                                     ui.checkbox(&mut restore_file.0, restore_file.1.clone());
-                                    
+
                                     if (index + 1) % num_col.round().floor() as usize == 0 {
                                         ui.end_row();
                                     }
                                 }
                             });
-                        
-                        ui.add_space(30.0);    
-                        
-                        let all_button = egui::Button::new(
-                            egui::RichText::new("All")
-                                .size(13.0)
-                                .strong()
-                        )
-                        .min_size(egui::vec2(30., 20.))
-                        .fill(egui::Color32::from_rgb(90, 110, 100));
-                
+
+                        ui.add_space(30.0);
+
+                        let all_button =
+                            egui::Button::new(egui::RichText::new("All").size(13.0).strong())
+                                .min_size(egui::vec2(30., 20.))
+                                .fill(egui::Color32::from_rgb(90, 110, 100));
+
                         let restore_button = egui::Button::new(
-                            egui::RichText::new("Restore")
-                                .size(13.0)
-                                .strong()
-                                .heading()
+                            egui::RichText::new("Restore").size(13.0).strong().heading(),
                         )
                         .min_size(egui::vec2(30., 20.))
                         .fill(egui::Color32::from_rgb(76, 190, 80));
-                        
+
                         ui.horizontal(|ui| {
                             ui.add_space(ui.available_width() / 2.0 - 70.0);
                             if ui.add(all_button).clicked() {
-                                self.restore_files.iter_mut().for_each(|(to_restore, _, _)| *to_restore = true);
+                                self.restore_files
+                                    .iter_mut()
+                                    .for_each(|(to_restore, _, _)| *to_restore = true);
                             }
-                            
+
                             ui.add_space(15.0);
-        
+
                             if ui.add(restore_button).clicked() {
                                 self.files_to_restore = true;
                                 self.restore_files_expanded = false;
                                 self.handle_restore();
                             }
-                        });                
+                        });
                     });
-                    
             });
         }
     }
@@ -1032,65 +1134,65 @@ impl eframe::App for AutoGitApp {
         style.visuals.widgets.noninteractive.bg_fill = egui::Color32::from_rgb(45, 45, 45);
         style.visuals.extreme_bg_color = egui::Color32::from_rgb(30, 30, 30);
         ctx.set_style(style);
-        
+
         egui::CentralPanel::default().show(ctx, |ui| {
             // let available_height = ui.available_height();
             self.draw_menu(ui);
-            
+
             ctx.request_repaint();
 
             // Header
             ui.vertical_centered(|ui| {
                 ui.add_space(15.0);
-                ui.heading(
-                    egui::RichText::new("🔄 Auto-Git")
-                        .size(26.0)
-                        .strong()
-                );
+                ui.heading(egui::RichText::new("🔄 Auto-Git").size(26.0).strong());
                 ui.add_space(5.0);
                 ui.label(
                     egui::RichText::new("Automatic Git repository synchronization")
                         .size(13.0)
-                        .color(egui::Color32::GRAY)
+                        .color(egui::Color32::GRAY),
                 );
             });
-            
+
             ui.add_space(10.0);
             ui.separator();
-            
+
             // Bottoni principali
             self.draw_buttons(ui);
-            
+
             ui.separator();
-                    
+
             // Indicatore di stato
             self.draw_status_indicator(ui);
 
             self.draw_commit_input(ui);
             self.draw_add_untracked_files(ui);
             self.draw_restore_files(ui);
-            
+
             // Spazio flessibile per spingere il pannello terminale in basso
             // ui.add_space(available_height - 300.0);
             // Pannello terminale (sempre in basso)
             self.draw_terminal_panel(ui, ctx);
         });
-        
+
         // Richiedi un ridisegno continuo quando c'è un'operazione in corso
-        if matches!(*self.shared_data.state.lock().unwrap(), AppState::Processing(_)) {
+        if matches!(
+            *self.shared_data.state.lock().unwrap(),
+            AppState::Processing(_)
+        ) {
             ctx.request_repaint();
         }
     }
-    
+
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         info!("exiting Auto-Git");
         // in uscita scrive il percorso usato dall'applicazione nel file .git-project
         if let Some(ref pp) = *self.shared_data.project_path.lock().unwrap() {
             info!("writing new path in .git-project file: {}", pp.display());
             fs::write(
-                lib_get_git_project_file_path().unwrap(), 
-                pp.display().to_string()
-            ).unwrap();
+                lib_get_git_project_file_path().unwrap(),
+                pp.display().to_string(),
+            )
+            .unwrap();
         }
         *self.shared_data.state.lock().unwrap() = AppState::Exit;
 
@@ -1109,7 +1211,7 @@ pub(crate) fn gui_app() -> eframe::Result<()> {
             ),
         ..Default::default()
     };
-    
+
     eframe::run_native(
         "Auto-Git",
         options,
