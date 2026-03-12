@@ -475,3 +475,111 @@ pub fn lib_git_add(project_path: &Option<PathBuf>, untracked_files_vec: &Vec<(bo
     }
 
 }
+
+#[allow(unused)]
+pub fn lib_get_files_to_restore(project_path: &Option<PathBuf>, restore_files_vec: &mut Vec<(bool, String, bool)>) -> Result<(), Error>{
+    info!(target: "lib", "getting modified files to restore");
+
+    // evita i duplicati
+    restore_files_vec.clear();
+
+    if let Some(project_path) = project_path {
+        match git(&["status", "-s"], Some(project_path.as_path())) {
+            Ok(out) => {
+                let outputstr :String = out.stdout.iter().map(|c| *c as char).collect::<String>();
+
+                // if staged
+                restore_files_vec.extend(outputstr.split_terminator("\n")
+                    .filter(|f| !f.contains(" M") && f.contains("M ") || f.contains("MM "))
+                    .map(|m_file| 
+                        (false, m_file.split_at(3).1.to_string(), true)
+                    )
+                    .collect::<Vec<(bool, String, bool)>>());
+                
+                
+                // if not staged
+                restore_files_vec.extend(outputstr.split_terminator("\n")
+                .filter(|f| f.contains(" M "))
+                .map(|m_file|
+                    (false, m_file.split_at(3).1.to_string(), false)
+                )
+                .collect::<Vec<(bool, String, bool)>>());
+            
+                Ok(())
+            },
+            Err(err) => {
+                error!(target: "lib", "{err}");
+                error::<Okay>(
+                    &format!("Could not complete status, check your internet connection or the selected project path\n{err}"))
+                    .show()
+                    .unwrap();
+                Err(err)
+            }
+        }
+    } else {
+        error!(target: "lib", "project path not selected");
+        Err(Error::Io(io::Error::new(io::ErrorKind::NotFound, "path file not set!")))
+    }
+}
+
+#[allow(unused)]
+pub fn lib_git_restore(project_path: &Option<PathBuf>, restore_files_vec: &Vec<(bool, String, bool)>) -> Result<(), Error>{
+    info!("adding untracked files files");
+
+    if let Some(project_path) = project_path {        
+        let mut files_staged_to_restore = restore_files_vec.iter()
+            .filter(|(to_restore, _, staged)| *to_restore == true && *staged == true)
+            .map(|(_, file, _)| file.as_str())
+            .collect::<Vec<&str>>();
+        
+        if !files_staged_to_restore.is_empty() {
+            files_staged_to_restore.insert(0, "restore");
+            files_staged_to_restore.insert(1, "--staged");
+    
+            match git(&files_staged_to_restore, Some(project_path.as_path())) {
+                Ok(_) => {  
+                    info!("files staged restored");
+                    // Ok(())
+                },
+                Err(err) => {
+                    error!(target: "lib", "{err}");
+                    error::<Okay>(
+                        &format!("Could not restore staged files, check your internet connection or the selected project path\n{err}"))
+                        .show()
+                        .unwrap();
+                    return Err(err);
+                    // Err(err)
+                }
+            }
+        }
+
+        let mut files_to_restore = restore_files_vec.iter()
+            .filter(|(to_restore, _, staged)| *to_restore == true && *staged == false)
+            .map(|(_, file, _)| file.as_str())
+            .collect::<Vec<&str>>();
+        
+        if !files_to_restore.is_empty() {
+            files_to_restore.insert(0, "restore");
+    
+            match git(&files_to_restore, Some(project_path.as_path())) {
+                Ok(_) => {  
+                    info!("files restored");
+                    Ok(())
+                },
+                Err(err) => {
+                    error!(target: "lib", "{err}");
+                    error::<Okay>(
+                        &format!("Could not restore staged files, check your internet connection or the selected project path\n{err}"))
+                        .show()
+                        .unwrap();
+                    Err(err)
+                }
+            }
+        } else {
+            Ok(())
+        }
+    } else {
+        error!(target: "lib", "project path not selected");
+        Err(Error::Io(io::Error::new(io::ErrorKind::NotFound, "path file not set!")))
+    }
+}

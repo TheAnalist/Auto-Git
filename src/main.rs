@@ -8,11 +8,7 @@ Dev: The Analist
 #![windows_subsystem = "windows"]
 
 mod ui;
-mod lib;
-// mod cli;
-
 use ui::gui_app;
-// use cli::cli;
 use env_logger::Env;
 
 

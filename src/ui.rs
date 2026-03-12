@@ -49,7 +49,12 @@ pub struct AutoGitApp {
     advanced_git_options:     bool,
     untracked_files:          Vec<(bool, String)>,
     untracked_files_expanded: bool,
-    untracked_files_to_add:   bool
+    untracked_files_to_add:   bool,
+    //                        (0: to_restore, 1: path, 2: staged)
+    restore_files:            Vec<(bool, String, bool)>,
+    restore_files_expanded:   bool,
+    files_to_restore:         bool,
+    
 }
 
 fn back_align_project_n_stage_changes(
@@ -101,7 +106,7 @@ fn back_align_project_n_stage_changes(
             }
             repaint.request_repaint();
             {
-                let mut status = shared_data.state.lock().unwrap();
+                let status = shared_data.state.lock().unwrap();
                 
                 if matches!(*status, AppState::Exit) { break; }
                 
@@ -214,7 +219,10 @@ impl AutoGitApp {
             advanced_git_options: false,
             untracked_files: Vec::new(),
             untracked_files_expanded: false,
-            untracked_files_to_add: false
+            untracked_files_to_add: false,
+            restore_files: Vec::new(),
+            restore_files_expanded: false,
+            files_to_restore: false
         }
     }
 
@@ -402,6 +410,54 @@ impl AutoGitApp {
     /// Operazione di Restore dei files
     fn handle_restore(&mut self) {
         info!("handling restore");
+        self.begin_operation("Restore");
+
+        if !self.restore_files_expanded && !self.files_to_restore {
+            match lib_get_files_to_restore(
+                &self.shared_data.project_path.lock().unwrap().clone(), 
+                &mut self.restore_files
+            ) {
+                Ok(_) => {
+                    self.shared_data.terminal_output.lock().unwrap().push(format!("{OK_TICK} Modified files to restore found!"));
+                    self.restore_files_expanded = true;
+                },
+                Err(err) => {
+                    match err {
+                        Error::Io(_) => {
+                            *self.shared_data.state.lock().unwrap() = AppState::Error("Project path not set".to_string());
+                            self.shared_data.terminal_output.lock().unwrap().push(format!("{ERROR_TICK} Configure the project path from the menu 'Set Project'"));
+                        },
+                        _ => {
+                            *self.shared_data.state.lock().unwrap() = AppState::Error("Restore operation incomplete due to an error".to_string());
+                            self.shared_data.terminal_output.lock().unwrap().push(format!("{ERROR_TICK} Restore operation errored: {}", err));
+                        }
+                    }
+                }
+            }
+        }
+
+        if self.files_to_restore {
+            match lib_git_restore(&self.shared_data.project_path.lock().unwrap(), &self.restore_files) {
+                Ok(_) => {
+                    self.shared_data.terminal_output.lock().unwrap().push(format!("{OK_TICK} Files {} restored!", self.restore_files.iter().filter(|(restored, _, _)| restored.eq(&true)).count()));
+                    *self.shared_data.state.lock().unwrap() = AppState::Success("File(s) restored successfully".to_string());
+                },
+                Err(err) => {
+                    match err {
+                        Error::Io(_) => {
+                            *self.shared_data.state.lock().unwrap() = AppState::Error("Project path not set".to_string());
+                            self.shared_data.terminal_output.lock().unwrap().push(format!("{ERROR_TICK} Configure the project path from the menu 'Set Project'"));
+                        },
+                        _ => {
+                            *self.shared_data.state.lock().unwrap() = AppState::Error("Restore operation incomplete due to an error".to_string());
+                            self.shared_data.terminal_output.lock().unwrap().push(format!("{ERROR_TICK} Restore operation errored: {}", err));
+                        }
+                    }
+                }
+            }
+            self.files_to_restore = false;
+            self.restore_files_expanded = false;
+        }
     }
 
     /// Operazione di Clone dei files
@@ -665,6 +721,7 @@ impl AutoGitApp {
                         self.idle();
                         self.commit_input_expanded = false;
                         self.untracked_files_expanded = false;
+                        self.restore_files_expanded = false;
                         self.add_terminal_output("Operation aborted".to_string());
                         *self.shared_data.state.lock().unwrap() = AppState::Idle;
                     }
@@ -696,7 +753,7 @@ impl AutoGitApp {
                         .strong()
                 );
 
-                if response.clicked() {
+                if response.clicked(){
                     self.terminal_expanded = !self.terminal_expanded;
                 }
                 
@@ -892,6 +949,76 @@ impl AutoGitApp {
             });
         }
     }
+
+    fn draw_restore_files(&mut self, ui: &mut egui::Ui) {
+        if self.restore_files_expanded {
+            ui.vertical_centered(|ui| {
+                ui.set_max_width(ui.available_width() - 100.0);
+
+                let num_col = (ui.available_width() - 100.0) / (10.0 * self.restore_files.len() as f32);
+                // println!("{num_col}");
+
+                egui::Frame::group(ui.style())
+                    .inner_margin(egui::Margin::symmetric(20, 15))
+                    .show(ui, |ui| {
+                        ui.vertical_centered(|ui| {
+                            ui.heading(RichText::new("⏮ Restore files").size(15.).strong())
+                        });
+                        
+                        ui.separator();
+
+                        egui::Grid::new("files_grid")
+                            .num_columns(3)
+                            .spacing([20.0, 15.0])
+                            .striped(true)
+                            .show(ui, |ui| {
+                                for (index, restore_file) in self.restore_files.iter_mut().enumerate() {
+                                    ui.checkbox(&mut restore_file.0, restore_file.1.clone());
+                                    
+                                    if (index + 1) % num_col.round().floor() as usize == 0 {
+                                        ui.end_row();
+                                    }
+                                }
+                            });
+                        
+                        ui.add_space(30.0);    
+                        
+                        let all_button = egui::Button::new(
+                            egui::RichText::new("All")
+                                .size(13.0)
+                                .strong()
+                        )
+                        .min_size(egui::vec2(30., 20.))
+                        .fill(egui::Color32::from_rgb(90, 110, 100));
+                
+                        let restore_button = egui::Button::new(
+                            egui::RichText::new("Restore")
+                                .size(13.0)
+                                .strong()
+                                .heading()
+                        )
+                        .min_size(egui::vec2(30., 20.))
+                        .fill(egui::Color32::from_rgb(76, 190, 80));
+                        
+                        ui.horizontal(|ui| {
+                            ui.add_space(ui.available_width() / 2.0 - 70.0);
+                            if ui.add(all_button).clicked() {
+                                self.restore_files.iter_mut().for_each(|(to_restore, _, _)| *to_restore = true);
+                            }
+                            
+                            ui.add_space(15.0);
+        
+                            if ui.add(restore_button).clicked() {
+                                self.files_to_restore = true;
+                                self.restore_files_expanded = false;
+                                self.handle_restore();
+                            }
+                        });                
+                    });
+                    
+            });
+        }
+    }
 }
 
 impl eframe::App for AutoGitApp {
@@ -935,12 +1062,13 @@ impl eframe::App for AutoGitApp {
             self.draw_buttons(ui);
             
             ui.separator();
-            
+                    
             // Indicatore di stato
             self.draw_status_indicator(ui);
 
             self.draw_commit_input(ui);
             self.draw_add_untracked_files(ui);
+            self.draw_restore_files(ui);
             
             // Spazio flessibile per spingere il pannello terminale in basso
             // ui.add_space(available_height - 300.0);
