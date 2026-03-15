@@ -1,4 +1,4 @@
-// Auto-Git UI
+//Auto-Git UI
 use auto_git::*;
 use core::f32;
 use eframe::egui::{self, Color32, RichText};
