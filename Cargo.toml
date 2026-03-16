@@ -1,7 +1,7 @@
 [package]
 name = "auto-git"
 description = "Un progetto per allineare automaticamente il progetto locale con la versione su github"
-version = "0.2.1"
+version = "0.0.3"
 edition = "2024"
 
 [profile.release]
