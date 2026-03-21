@@ -1,4 +1,4 @@
-//Auto-Git UI
+// Auto-Git UI
 use auto_git::*;
 use core::f32;
 use eframe::egui::{self, Color32, RichText};
@@ -70,6 +70,23 @@ fn back_align_project_n_stage_changes(shared_data: SharedAppData, repaint: egui:
 
         loop {
             {
+                let status = shared_data.state.lock().unwrap();
+
+                if matches!(*status, AppState::Exit) {
+                    break;
+                }
+
+                if !lib_check_internet() {
+                    // sleep(POLL_INTERVAL);
+                    let _ = shared_data
+                        .condvar
+                        .wait_timeout(status, POLL_INTERVAL)
+                        .unwrap();
+                    continue;
+                }
+            }
+            
+            {
                 let mut status = shared_data.state.lock().unwrap();
 
                 while matches!(*status, AppState::Processing(_))
@@ -79,6 +96,17 @@ fn back_align_project_n_stage_changes(shared_data: SharedAppData, repaint: egui:
                 }
                 // info!("searching");
                 *status = AppState::Searching;
+
+                lib_cleanup_stale_lock(&shared_data.project_path.lock().unwrap());
+
+                if lib_is_git_locked(&shared_data.project_path.lock().unwrap()) {
+                    let _ = shared_data
+                        .condvar
+                        .wait_timeout(status, POLL_INTERVAL)
+                        .unwrap();
+
+                    continue;
+                }
 
                 let mut files_staged = shared_data.files_staged.lock().unwrap();
 
@@ -119,28 +147,24 @@ fn back_align_project_n_stage_changes(shared_data: SharedAppData, repaint: egui:
                 }
                 // -------------------------------------------------------------------------------
             }
+
             repaint.request_repaint();
+
+
+            repaint.request_repaint();
+
             {
-                let status = shared_data.state.lock().unwrap();
+                let mut status = shared_data.state.lock().unwrap();
 
-                if matches!(*status, AppState::Exit) {
-                    break;
-                }
+                lib_cleanup_stale_lock(&shared_data.project_path.lock().unwrap());
 
-                if !lib_check_internet() {
-                    // sleep(POLL_INTERVAL);
+                if lib_is_git_locked(&shared_data.project_path.lock().unwrap()) {
                     let _ = shared_data
                         .condvar
                         .wait_timeout(status, POLL_INTERVAL)
                         .unwrap();
                     continue;
                 }
-            }
-
-            repaint.request_repaint();
-
-            {
-                let mut status = shared_data.state.lock().unwrap();
 
                 // status
                 *shared_data.status_output.lock().unwrap() =
@@ -149,24 +173,31 @@ fn back_align_project_n_stage_changes(shared_data: SharedAppData, repaint: egui:
                 // check remote ahead and pull
                 if let Some(out) = shared_data.status_output.lock().unwrap().clone() {
                     if lib_check_remote_ahead(out) {
-                        match lib_make_pull(
-                            &shared_data.project_path.lock().unwrap(),
-                            &mut shared_data.terminal_output.lock().unwrap(),
-                        ) {
+                        shared_data
+                            .terminal_output
+                            .lock()
+                            .unwrap()
+                            .push("▶ Processing pull form remote repository...".to_string());
+
+                        match lib_make_pull(&shared_data.project_path.lock().unwrap()) {
                             Ok(_) => {
                                 *status =
                                     AppState::Success("Pull completed successfully".to_string());
 
-                                // if let Ok(mut terminal_output) = shared_data.terminal_output.try_lock() {
-                                //     terminal_output.push(format!("{OK_TICK} Pull completato con successo!"));
-                                // }
+                                shared_data
+                                    .terminal_output
+                                    .lock()
+                                    .unwrap()
+                                    .push(format!("{OK_TICK} Pull completed successfully!"));
                             }
                             Err(_) => {
                                 *status = AppState::Error("Error in pull operation".to_string());
 
-                                // if let Ok(mut terminal_output) = shared_data.terminal_output.try_lock() {
-                                //     terminal_output.push(format!("{ERROR_TICK} Errore nell'operzione di pull"));
-                                // }
+                                shared_data
+                                    .terminal_output
+                                    .lock()
+                                    .unwrap()
+                                    .push(format!("{OK_TICK} Error in Pull operation!"));
                             }
                         }
                     }

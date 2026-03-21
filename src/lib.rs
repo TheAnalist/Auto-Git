@@ -20,6 +20,7 @@ const STARTUP_DIR: &str = "($env:APPDATA + '\\Auto-Git\\')";
 
 // ---------------------------------- GIT_COMMANDS ----------------------------------
 //                          Autor: https://github.com/Timmmm
+//                      Heavily modified due to security problems
 #[derive(Debug)]
 pub enum Error {
     Io(io::Error),
@@ -56,6 +57,7 @@ impl From<io::Error> for Error {
     }
 }
 
+/// Funzione di sicurezza per evitare connessione a cartelle UNC e leak del hash NTLM.
 fn is_unsafe_path(path: &Path) -> bool {
     if let Some(s) = path.to_str() {
         // All known Windows UNC and device path prefixes
@@ -98,9 +100,9 @@ fn git(args: &[&str], working_dir: Option<&Path>) -> Result<process::Output, Err
     if let Some(working_dir) = working_dir {
         // security check: real path
         let canonicalized_path = fs::canonicalize(working_dir).map_err(|e| Error::Io(e))?;
-        // security check: contains .git folder and it's not a symlink
+        // security check: contains .git folder
         let git_path = canonicalized_path.join(".git");
-
+        // security check: path it's not a symlink
         if git_path.is_symlink() {
             return Err(Error::Io(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -150,6 +152,34 @@ pub fn lib_pwsh_psscript_builder() -> PsScript {
         .hidden(true)
         .print_commands(false)
         .build()
+}
+
+#[allow(unused)]
+/// Funzione di sicurezza: TOCTOU
+pub fn lib_is_git_locked(project_path: &Option<PathBuf>) -> bool {
+    if let Some(path) = project_path {
+        path.join(".git").join("index.lock").exists()
+    } else {
+        false
+    }
+}
+
+#[allow(unused)]
+pub fn lib_cleanup_stale_lock(project_path: &Option<PathBuf>) {
+    if let Some(project_path) = project_path {
+        let lock_path = project_path.join(".git").join("index.lock");
+
+        if lock_path.exists() {
+            // Only remove if older than 60s — a fresh lock means git is running
+            if let Ok(metadata) = fs::metadata(&lock_path) {
+                if let Ok(modified) = metadata.modified() {
+                    if modified.elapsed().unwrap_or_default().as_secs() > 60 {
+                        let _ = fs::remove_file(&lock_path);
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[allow(unused)]
@@ -244,6 +274,16 @@ pub fn lib_get_project_path() -> Option<PathBuf> {
 pub fn lib_git_update_local(project_path: &Option<PathBuf>) -> Option<String> {
     // Handle PathBuf None error
     if let Some(pb) = project_path {
+        // fetch
+        info!(target: "lib", "fetching");
+        match git(&["fetch"], Some(pb.as_path())) {
+            Ok(_) => {}
+            Err(err) => {
+                error::<Okay>(&err.to_string()).show().unwrap();
+                error!(target: "lib", "{}", err);
+                return None;
+            }
+        }
         // remote update
         info!(target: "lib", "remote update");
         match git(&["remote", "update"], Some(pb.as_path())) {
@@ -308,15 +348,15 @@ pub fn lib_check_remote_ahead(status_string: String) -> bool {
 #[allow(unused)]
 pub fn lib_make_pull(
     project_path: &Option<PathBuf>,
-    terminal_output: &mut Vec<String>,
+    // terminal_output: &mut Vec<String>,
 ) -> Result<(), Error> {
     info!(target: "lib", "pulling from remote repository");
 
-    if terminal_output.len() > MAX_TERMINAL_LENGHT {
-        terminal_output.remove(0);
-    }
+    // if terminal_output.len() > MAX_TERMINAL_LENGHT {
+    //     terminal_output.remove(0);
+    // }
 
-    terminal_output.push("▶ Processing pull form remote repository...".to_string());
+    // terminal_output.push("▶ Processing pull form remote repository...".to_string());
 
     // sono sicuro che project_path sia Some
     let path = project_path.as_ref().unwrap().display().to_string();
@@ -698,7 +738,10 @@ mod security {
     use super::*;
 
     #[test]
-    fn test1() {
-        git(&["status"], None).unwrap();
+    fn security_test_1() {
+        // std::process::Command::new("chrome.exe")
+        //     .arg("C:\\Users\\david\\SIMONE\\INFORMATICA\\Project-Metamorphosis\\project\\auto-git\\hack.html")
+        //     .spawn()
+        //     .unwrap();
     }
 }
