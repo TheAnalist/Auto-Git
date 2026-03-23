@@ -23,6 +23,7 @@ const BUTTON_HEIGHT: f32 = 50.0;
 #[derive(Clone, Debug)]
 enum AppState {
     Idle,
+    Info(String),
     Processing(String),
     Success(String),
     Error(String),
@@ -56,7 +57,7 @@ pub struct AutoGitApp {
     untracked_files: Vec<(bool, String)>,
     untracked_files_expanded: bool,
     untracked_files_to_add: bool,
-    //                        (0: to_restore, 1: path, 2: staged)
+    // restore_files: (0: to_restore, 1: path, 2: staged)
     restore_files: Vec<(bool, String, bool)>,
     restore_files_expanded: bool,
     files_to_restore: bool,
@@ -70,93 +71,35 @@ fn back_align_project_n_stage_changes(shared_data: SharedAppData, repaint: egui:
 
         loop {
             {
-                let status = shared_data.state.lock().unwrap();
+                let mut status = shared_data.state.lock().unwrap();
 
                 if matches!(*status, AppState::Exit) {
                     break;
                 }
-
-                if !lib_check_internet() {
-                    // sleep(POLL_INTERVAL);
-                    let _ = shared_data
-                        .condvar
-                        .wait_timeout(status, POLL_INTERVAL)
-                        .unwrap();
-                    continue;
-                }
-            }
-            
-            {
-                let mut status = shared_data.state.lock().unwrap();
 
                 while matches!(*status, AppState::Processing(_))
                     || matches!(*status, AppState::Error(_))
                 {
                     status = shared_data.condvar.wait(status).unwrap();
                 }
-                // info!("searching");
+
                 *status = AppState::Searching;
 
-                lib_cleanup_stale_lock(&shared_data.project_path.lock().unwrap());
-
-                if lib_is_git_locked(&shared_data.project_path.lock().unwrap()) {
+                if !lib_check_internet() {
                     let _ = shared_data
                         .condvar
                         .wait_timeout(status, POLL_INTERVAL)
                         .unwrap();
-
                     continue;
                 }
-
-                let mut files_staged = shared_data.files_staged.lock().unwrap();
-
-                // --------------------------- Stage files per il push ---------------------------
-                if files_staged.is_empty() {
-                    shared_data
-                        .terminal_output
-                        .lock()
-                        .unwrap()
-                        .push("▶ Adding modified files to commit...".to_string());
-                }
-
-                // stage modified files for commit
-                match lib_stage_changes(
-                    &shared_data.project_path.lock().unwrap(),
-                    &mut files_staged,
-                ) {
-                    Ok(changes_staged) => {
-                        if matches!(changes_staged, ChangesStaged::Staged) {
-                            *status = AppState::Success(
-                                "Files successfully added to the commit".to_string(),
-                            );
-                            shared_data.terminal_output.lock().unwrap().push(format!(
-                                "{OK_TICK} Files successfully added to the commit! ({})",
-                                files_staged.join(", ")
-                            ));
-                        }
-                    }
-                    Err(_) => {
-                        *status =
-                            AppState::Error("Error during file staging execution".to_string());
-                        shared_data
-                            .terminal_output
-                            .lock()
-                            .unwrap()
-                            .push(format!("{ERROR_TICK} Error during file staging execution"));
-                    }
-                }
-                // -------------------------------------------------------------------------------
             }
-
-            repaint.request_repaint();
-
 
             repaint.request_repaint();
 
             {
                 let mut status = shared_data.state.lock().unwrap();
 
-                lib_cleanup_stale_lock(&shared_data.project_path.lock().unwrap());
+                lib_cleanup_state_lock(&shared_data.project_path.lock().unwrap());
 
                 if lib_is_git_locked(&shared_data.project_path.lock().unwrap()) {
                     let _ = shared_data
@@ -309,42 +252,122 @@ impl AutoGitApp {
     }
 
     /// Non fa nulla perchè interrompe l'esecuzione della funzione precedente
-    fn idle(&self) {
+    fn idle(&mut self) {
         info!("ui idle");
+
+        *self.shared_data.state.lock().unwrap() = AppState::Idle;
+        self.commit_input_expanded = false;
+        self.untracked_files_expanded = false;
+        self.restore_files_expanded = false;
         self.shared_data.condvar.notify_all();
+    }
+
+    fn handle_stage_changes(&mut self) {
+        self.begin_operation("Staging Changes");
+        // let mut status = self.shared_data.state.lock().unwrap();
+
+        lib_cleanup_state_lock(&self.shared_data.project_path.lock().unwrap());
+
+        if lib_is_git_locked(&self.shared_data.project_path.lock().unwrap()) {
+            let _ = self
+                .shared_data
+                .condvar
+                .wait_timeout(
+                    self.shared_data.state.lock().unwrap(),
+                    Duration::from_secs(20),
+                )
+                .unwrap();
+        }
+
+        let mut files_staged = self.shared_data.files_staged.lock().unwrap();
+
+        if files_staged.is_empty() {
+            self.shared_data
+                .terminal_output
+                .lock()
+                .unwrap()
+                .push("▶ Adding modified files to commit...".to_string());
+        }
+
+        // stage modified files for commit
+        match lib_stage_changes(
+            &self.shared_data.project_path.lock().unwrap(),
+            &mut files_staged,
+        ) {
+            Ok(changes_staged) => {
+                if matches!(changes_staged, ChangesStaged::Staged) {
+                    *self.shared_data.state.lock().unwrap() =
+                        AppState::Success("Files successfully added to the commit".to_string());
+
+                    self.shared_data
+                        .terminal_output
+                        .lock()
+                        .unwrap()
+                        .push(format!(
+                            "{OK_TICK} Files successfully added to the commit! ({})",
+                            files_staged.join(", ")
+                        ));
+                }
+            }
+            Err(_) => {
+                *self.shared_data.state.lock().unwrap() =
+                    AppState::Error("Error during file staging execution".to_string());
+                self.shared_data
+                    .terminal_output
+                    .lock()
+                    .unwrap()
+                    .push(format!("{ERROR_TICK} Error during file staging execution"));
+            }
+        }
     }
 
     /// Operazione di Push
     fn handle_push(&mut self) {
-        info!("handling status");
+        self.handle_stage_changes();
+
+        info!("handling push");
         self.begin_operation("Push");
 
-        self.commit_input_expanded = true;
+        // self.commit_input_expanded = true;
         self.add_terminal_output("\u{2714} Starting Push operation".to_string());
 
-        if self.complete_push {
+        // dbg!(self.complete_push && !self.shared_data.files_staged.lock().unwrap().is_empty());
+        if self.complete_push && !self.shared_data.files_staged.lock().unwrap().is_empty() {
             let mut in_error_state: bool = false;
 
             match lib_make_push(
                 &self.shared_data.project_path.lock().unwrap(),
                 &self.commit_message,
             ) {
-                Ok(_) => {
-                    if let Ok(mut state) = self.shared_data.state.try_lock() {
-                        in_error_state = matches!(*state, AppState::Error(_));
-                        *state = AppState::Success("Push completed successfully".to_string());
-                    }
+                Ok(result) => {
+                    if matches!(result, OkPushResult::Pushed) {
+                        if let Ok(mut state) = self.shared_data.state.try_lock() {
+                            in_error_state = matches!(*state, AppState::Error(_));
+                            *state = AppState::Success("Push completed successfully".to_string());
+                        }
 
-                    self.shared_data
-                        .terminal_output
-                        .lock()
-                        .unwrap()
-                        .push(format!("{OK_TICK} Push completed successfully"));
+                        self.shared_data
+                            .terminal_output
+                            .lock()
+                            .unwrap()
+                            .push(format!("{OK_TICK} Push completed successfully"));
 
-                    self.shared_data.files_staged.lock().unwrap().clear();
+                        self.shared_data.files_staged.lock().unwrap().clear();
 
-                    if in_error_state {
-                        self.shared_data.condvar.notify_all();
+                        if in_error_state {
+                            self.shared_data.condvar.notify_all();
+                        }
+                    } else {
+                        self.shared_data
+                            .terminal_output
+                            .lock()
+                            .unwrap()
+                            .push("No changes staged for push".to_string());
+
+                        *self.shared_data.state.lock().unwrap() =
+                            AppState::Info("Nothing to push".to_string());
+
+                        self.commit_input_expanded = false;
                     }
                 }
                 Err(err) => match err {
@@ -370,6 +393,16 @@ impl AutoGitApp {
 
             self.commit_input_expanded = false;
             self.complete_push = false;
+        } else {
+            self.shared_data
+                .terminal_output
+                .lock()
+                .unwrap()
+                .push("No changes staged for push".to_string());
+
+            *self.shared_data.state.lock().unwrap() = AppState::Info("Nothing to push".to_string());
+
+            self.commit_input_expanded = false;
         }
     }
 
@@ -664,10 +697,6 @@ impl AutoGitApp {
                     .clicked()
                 {
                     info!("resetting state");
-                    *self.shared_data.state.lock().unwrap() = AppState::Idle;
-                    self.commit_input_expanded = false;
-                    self.untracked_files_expanded = false;
-                    self.restore_files_expanded = false;
                     self.idle();
                 }
             });
@@ -680,7 +709,7 @@ impl AutoGitApp {
             *self.shared_data.state.lock().unwrap(),
             AppState::Processing(_)
         );
-        let files_staged_empty = self.shared_data.files_staged.lock().unwrap().is_empty();
+        // let files_staged_empty = self.shared_data.files_staged.lock().unwrap().is_empty();
 
         // Calcola la larghezza disponibile e dividi per 3 bottoni + spaziatura
         let available_width = ui.available_width() - 60.0; // 40px per margini, 20px per spacing
@@ -692,14 +721,16 @@ impl AutoGitApp {
             ui.add_space(20.0);
 
             // Bottone Push
-            ui.add_enabled_ui(!is_processing && !files_staged_empty, |ui| {
+            ui.add_enabled_ui(!is_processing, |ui| {
                 let push_button =
                     egui::Button::new(egui::RichText::new("🚀 Push").size(18.0).strong())
                         .min_size(egui::vec2(button_width, BUTTON_HEIGHT))
                         .fill(egui::Color32::from_rgb(76, 175, 80)); // Verde
 
                 if ui.add(push_button).clicked() {
-                    self.handle_push();
+                    // self.handle_push();
+                    self.begin_operation("Commit");
+                    self.commit_input_expanded = true;
                 }
             });
 
@@ -839,6 +870,13 @@ impl AutoGitApp {
                             .color(egui::Color32::from_rgb(33, 150, 243)),
                     );
                 }
+                AppState::Info(message) => {
+                    ui.label(
+                        egui::RichText::new(format!("\u{2139} {}", message))
+                            .size(14.0)
+                            .color(egui::Color32::GRAY),
+                    );
+                }
                 _ => {}
             }
 
@@ -947,7 +985,8 @@ impl AutoGitApp {
                                         } else if line.starts_with("▶") {
                                             egui::Color32::from_rgb(33, 150, 243)
                                         } else {
-                                            egui::Color32::LIGHT_GRAY
+                                            // egui::Color32::LIGHT_GRAY
+                                            egui::Color32::GRAY
                                         };
 
                                         ui.label(

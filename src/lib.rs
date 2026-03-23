@@ -141,6 +141,11 @@ pub enum ChangesStaged {
     Ingored,
 }
 
+pub enum OkPushResult {
+    Pushed,
+    Ingored,
+}
+
 /// ## Lib Powershell PsScript Builder
 ///
 /// crea un "component" PsScript con le preferenze di esecuzione
@@ -165,7 +170,7 @@ pub fn lib_is_git_locked(project_path: &Option<PathBuf>) -> bool {
 }
 
 #[allow(unused)]
-pub fn lib_cleanup_stale_lock(project_path: &Option<PathBuf>) {
+pub fn lib_cleanup_state_lock(project_path: &Option<PathBuf>) {
     if let Some(project_path) = project_path {
         let lock_path = project_path.join(".git").join("index.lock");
 
@@ -472,7 +477,10 @@ pub fn lib_stage_changes(
 }
 
 #[allow(unused)]
-pub fn lib_make_push(project_path: &Option<PathBuf>, commit_message: &String) -> Result<(), Error> {
+pub fn lib_make_push(
+    project_path: &Option<PathBuf>,
+    commit_message: &String,
+) -> Result<OkPushResult, Error> {
     if let Some(project_path) = project_path {
         // commit
         match git(
@@ -484,6 +492,12 @@ pub fn lib_make_push(project_path: &Option<PathBuf>, commit_message: &String) ->
             }
             Err(err) => {
                 error!(target: "lib", "{err}");
+
+                // nothing to push
+                if err.to_string().contains("Your branch is up to date with") {
+                    return Ok(OkPushResult::Ingored);
+                }
+
                 error::<Okay>(
                     &format!("Could not commit changes, check your internet connection or the selected project path\n{err}"))
                     .show()
@@ -497,7 +511,7 @@ pub fn lib_make_push(project_path: &Option<PathBuf>, commit_message: &String) ->
         match git(&["push"], Some(project_path.as_path())) {
             Ok(_) => {
                 info!(target: "lib", "pushed with success!");
-                return Ok(());
+                return Ok(OkPushResult::Pushed);
             }
             Err(err) => {
                 error!(target: "lib", "{err}");
@@ -730,18 +744,5 @@ pub fn lib_git_restore(
             io::ErrorKind::NotFound,
             "path file not set!",
         )))
-    }
-}
-
-#[cfg(test)]
-mod security {
-    use super::*;
-
-    #[test]
-    fn security_test_1() {
-        // std::process::Command::new("chrome.exe")
-        //     .arg("C:\\Users\\david\\SIMONE\\INFORMATICA\\Project-Metamorphosis\\project\\auto-git\\hack.html")
-        //     .spawn()
-        //     .unwrap();
     }
 }
