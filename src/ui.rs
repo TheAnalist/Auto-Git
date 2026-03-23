@@ -369,6 +369,8 @@ impl AutoGitApp {
 
                         self.commit_input_expanded = false;
                     }
+
+                    self.shared_data.condvar.notify_all();
                 }
                 Err(err) => match err {
                     Error::Io(_) => {
