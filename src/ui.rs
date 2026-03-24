@@ -64,7 +64,6 @@ pub struct AutoGitApp {
 }
 
 fn back_align_project_n_stage_changes(shared_data: SharedAppData, repaint: egui::Context) {
-    info!("starting checking thread");
     thread::spawn(move || {
         sleep(Duration::from_secs(1));
         const POLL_INTERVAL: Duration = Duration::from_secs(25);
@@ -241,6 +240,12 @@ impl AutoGitApp {
         // repaint.request_repaint();
     }
 
+    // aggiorna lo status dell'app
+    fn end_operation(&mut self) {
+        *self.shared_data.status_output.lock().unwrap() =
+            lib_git_status(&self.shared_data.project_path.lock().unwrap());
+    }
+
     /// Aggiunge una linea di output al terminale
     pub fn add_terminal_output(&mut self, line: String) {
         let mut output = self.shared_data.terminal_output.lock().unwrap();
@@ -331,7 +336,6 @@ impl AutoGitApp {
         // self.commit_input_expanded = true;
         self.add_terminal_output("\u{2714} Starting Push operation".to_string());
 
-        // dbg!(self.complete_push && !self.shared_data.files_staged.lock().unwrap().is_empty());
         if self.complete_push && !self.shared_data.files_staged.lock().unwrap().is_empty() {
             let mut in_error_state: bool = false;
 
@@ -370,6 +374,7 @@ impl AutoGitApp {
                         self.commit_input_expanded = false;
                     }
 
+                    // redo status
                     self.shared_data.condvar.notify_all();
                 }
                 Err(err) => match err {
@@ -406,6 +411,8 @@ impl AutoGitApp {
 
             self.commit_input_expanded = false;
         }
+
+        self.end_operation();
     }
 
     /// Operazione di Ignora
@@ -551,6 +558,8 @@ impl AutoGitApp {
                 },
             }
         }
+
+        self.end_operation();
     }
 
     /// Operazione di Restore dei files
@@ -632,6 +641,8 @@ impl AutoGitApp {
             self.files_to_restore = false;
             self.restore_files_expanded = false;
         }
+
+        self.end_operation();
     }
 
     /// Operazione di Clone dei files

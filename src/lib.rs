@@ -274,8 +274,13 @@ pub fn lib_get_project_path() -> Option<PathBuf> {
     }
 }
 
-/// aggigorna il progetto locale utilizzando "git remote update" e ritorna lo status
 #[allow(unused)]
+/// Git Update Local
+/// 
+/// aggigorna il progetto locale utilizzando "git remote update" e ritorna lo status
+/// - git fetch
+/// - git remote update
+/// - git status
 pub fn lib_git_update_local(project_path: &Option<PathBuf>) -> Option<String> {
     // Handle PathBuf None error
     if let Some(pb) = project_path {
@@ -319,6 +324,8 @@ pub fn lib_git_update_local(project_path: &Option<PathBuf>) -> Option<String> {
 }
 
 #[allow(unused)]
+/// Git Status:
+/// - git status
 pub fn lib_git_status(project_path: &Option<PathBuf>) -> Option<String> {
     if let Some(pb) = project_path {
         info!(target: "lib", "getting project status");
@@ -586,6 +593,8 @@ pub fn lib_get_untracked_files(
 }
 
 #[allow(unused)]
+/// Git Add
+/// - git add
 pub fn lib_git_add(
     project_path: &Option<PathBuf>,
     untracked_files_vec: &Vec<(bool, String)>,
@@ -678,6 +687,8 @@ pub fn lib_get_files_to_restore(
 }
 
 #[allow(unused)]
+/// Git Restore
+/// - git restore / git restore --staged
 pub fn lib_git_restore(
     project_path: &Option<PathBuf>,
     restore_files_vec: &Vec<(bool, String, bool)>,
