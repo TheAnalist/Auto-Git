@@ -51,6 +51,6 @@ If the app behaves unexpectedly:
 
 ## Roadmap
 
-* \[ ] Complete advanced options menu: Add, Restore, Clone
+* \[x] Complete advanced options menu: Add, Restore, Clone
 * \[ ] Create a new repository with "init" from the menu.
 * \[ ] Add support for multiple remote branches.

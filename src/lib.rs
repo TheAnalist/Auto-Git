@@ -276,7 +276,7 @@ pub fn lib_get_project_path() -> Option<PathBuf> {
 
 #[allow(unused)]
 /// Git Update Local
-/// 
+///
 /// aggigorna il progetto locale utilizzando "git remote update" e ritorna lo status
 /// - git fetch
 /// - git remote update
@@ -748,6 +748,53 @@ pub fn lib_git_restore(
             }
         } else {
             Ok(())
+        }
+    } else {
+        error!(target: "lib", "project path not selected");
+        Err(Error::Io(io::Error::new(
+            io::ErrorKind::NotFound,
+            "path file not set!",
+        )))
+    }
+}
+
+#[allow(unused)]
+/// Git Clone
+/// - git clone
+pub fn lib_git_clone(project_path: &Option<PathBuf>, url: &String) -> Result<(), Error> {
+    // Quasi del tutto inutile dato che gli argomenti passati alla funzione `git` vengono direttamente passati al programma per struttura
+    // e non ad una shell.
+    // sanitizing url input with regex "[^-A-Za-z0-9+&@#/%?=~_|!:,.;\(\)]"
+    // let re = Regex::new(r"[^-A-Za-z0-9+&@#/%?=~_|!:,.;\(\)]").unwrap();
+    // assert_eq!(re.replace("alert('hacked!');", ""), "alert(hacked!);");
+    info!(target: "lib", "cloning repository");
+
+    if !url.ends_with(".git") {
+        error!(target: "lib", "not a git repository");
+        error::<Okay>(&format!("The url inserted is not a git repository!"))
+            .show()
+            .unwrap();
+
+        return Err(Error::Io(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "not a git repository!",
+        )));
+    }
+
+    if let Some(project_path) = project_path {
+        match git(&["clone", url], Some(project_path.as_path())) {
+            Ok(_) => {
+                info!("repository cloned!");
+                Ok(())
+            }
+            Err(err) => {
+                error!(target: "lib", "{err}");
+                error::<Okay>(
+                    &format!("Could not clone the remote repository, check your internet connection or the selected project path\n{err}"))
+                    .show()
+                    .unwrap();
+                Err(err)
+            }
         }
     } else {
         error!(target: "lib", "project path not selected");

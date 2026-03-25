@@ -5,6 +5,7 @@ use eframe::egui::{self, Color32, RichText};
 use rfd::FileDialog;
 use std::{
     fs::{self},
+    io,
     path::PathBuf,
     sync::{Arc, Condvar, Mutex},
     thread::{self, sleep},
@@ -61,6 +62,8 @@ pub struct AutoGitApp {
     restore_files: Vec<(bool, String, bool)>,
     restore_files_expanded: bool,
     files_to_restore: bool,
+    clone_repository_explanded: bool,
+    clone_repository_url: String,
 }
 
 fn back_align_project_n_stage_changes(shared_data: SharedAppData, repaint: egui::Context) {
@@ -229,6 +232,8 @@ impl AutoGitApp {
             restore_files: Vec::new(),
             restore_files_expanded: false,
             files_to_restore: false,
+            clone_repository_explanded: false,
+            clone_repository_url: String::new(),
         }
     }
 
@@ -244,6 +249,13 @@ impl AutoGitApp {
     fn end_operation(&mut self) {
         *self.shared_data.status_output.lock().unwrap() =
             lib_git_status(&self.shared_data.project_path.lock().unwrap());
+
+        self.commit_input_expanded = false;
+        self.clone_repository_explanded = false;
+        self.restore_files_expanded = false;
+        self.untracked_files_expanded = false;
+        self.commit_message.clear();
+        self.clone_repository_url.clear();
     }
 
     /// Aggiunge una linea di output al terminale
@@ -264,10 +276,12 @@ impl AutoGitApp {
         self.commit_input_expanded = false;
         self.untracked_files_expanded = false;
         self.restore_files_expanded = false;
+        self.clone_repository_explanded = false;
         self.shared_data.condvar.notify_all();
+        self.commit_message.clear();
     }
 
-    fn handle_stage_changes(&mut self) {
+    fn stage_changes(&mut self) {
         self.begin_operation("Staging Changes");
         // let mut status = self.shared_data.state.lock().unwrap();
 
@@ -326,9 +340,78 @@ impl AutoGitApp {
         }
     }
 
+    fn update_untracked_files_list(&mut self) {
+        match lib_get_untracked_files(
+            &self.shared_data.project_path.lock().unwrap().clone(),
+            &mut self.untracked_files,
+        ) {
+            Ok(_) => {
+                self.shared_data
+                    .terminal_output
+                    .lock()
+                    .unwrap()
+                    .push(format!("{OK_TICK} 'Untracked files' found!"));
+                self.untracked_files_expanded = true;
+            }
+            Err(err) => {
+                match err {
+                    Error::Io(_) => {
+                        *self.shared_data.state.lock().unwrap() =
+                            AppState::Error("Project path not set".to_string());
+                        self.shared_data.terminal_output.lock().unwrap().push(format!("{ERROR_TICK} Configure the project path from the menu 'Set Project'"));
+                    }
+                    _ => {
+                        *self.shared_data.state.lock().unwrap() =
+                            AppState::Error("Add operation incomplete due to an error".to_string());
+                        self.shared_data
+                            .terminal_output
+                            .lock()
+                            .unwrap()
+                            .push(format!("{ERROR_TICK} Add operation errored: {}", err));
+                    }
+                }
+            }
+        }
+    }
+
+    fn update_restore_modified_files_list(&mut self) {
+        match lib_get_files_to_restore(
+            &self.shared_data.project_path.lock().unwrap().clone(),
+            &mut self.restore_files,
+        ) {
+            Ok(_) => {
+                self.shared_data
+                    .terminal_output
+                    .lock()
+                    .unwrap()
+                    .push(format!("{OK_TICK} Modified files to restore found!"));
+                self.restore_files_expanded = true;
+            }
+            Err(err) => {
+                match err {
+                    Error::Io(_) => {
+                        *self.shared_data.state.lock().unwrap() =
+                            AppState::Error("Project path not set".to_string());
+                        self.shared_data.terminal_output.lock().unwrap().push(format!("{ERROR_TICK} Configure the project path from the menu 'Set Project'"));
+                    }
+                    _ => {
+                        *self.shared_data.state.lock().unwrap() = AppState::Error(
+                            "Restore operation incomplete due to an error".to_string(),
+                        );
+                        self.shared_data
+                            .terminal_output
+                            .lock()
+                            .unwrap()
+                            .push(format!("{ERROR_TICK} Restore operation errored: {}", err));
+                    }
+                }
+            }
+        }
+    }
+
     /// Operazione di Push
     fn handle_push(&mut self) {
-        self.handle_stage_changes();
+        self.stage_changes();
 
         info!("handling push");
         self.begin_operation("Push");
@@ -373,9 +456,6 @@ impl AutoGitApp {
 
                         self.commit_input_expanded = false;
                     }
-
-                    // redo status
-                    self.shared_data.condvar.notify_all();
                 }
                 Err(err) => match err {
                     Error::Io(_) => {
@@ -398,7 +478,6 @@ impl AutoGitApp {
                 },
             }
 
-            self.commit_input_expanded = false;
             self.complete_push = false;
         } else {
             self.shared_data
@@ -408,8 +487,6 @@ impl AutoGitApp {
                 .push("No changes staged for push".to_string());
 
             *self.shared_data.state.lock().unwrap() = AppState::Info("Nothing to push".to_string());
-
-            self.commit_input_expanded = false;
         }
 
         self.end_operation();
@@ -418,9 +495,9 @@ impl AutoGitApp {
     /// Operazione di Ignora
     fn handle_ignore(&mut self) {
         info!("handling ignore");
-        let mut in_error_state: bool = false;
-
         self.begin_operation("Ignore");
+
+        let mut in_error_state: bool = false;
         sleep(Duration::from_millis(50));
         self.shared_data.files_staged.lock().unwrap().clear();
 
@@ -487,39 +564,6 @@ impl AutoGitApp {
         info!("handling add");
         self.begin_operation("Add");
 
-        // show untracked files (ui checkbox)
-        if !self.untracked_files_expanded && !self.untracked_files_to_add {
-            match lib_get_untracked_files(
-                &self.shared_data.project_path.lock().unwrap().clone(),
-                &mut self.untracked_files,
-            ) {
-                Ok(_) => {
-                    self.shared_data
-                        .terminal_output
-                        .lock()
-                        .unwrap()
-                        .push(format!("{OK_TICK} 'Untracked files' found!"));
-                    self.untracked_files_expanded = true;
-                }
-                Err(err) => match err {
-                    Error::Io(_) => {
-                        *self.shared_data.state.lock().unwrap() =
-                            AppState::Error("Project path not set".to_string());
-                        self.shared_data.terminal_output.lock().unwrap().push(format!("{ERROR_TICK} Configure the project path from the menu 'Set Project'"));
-                    }
-                    _ => {
-                        *self.shared_data.state.lock().unwrap() =
-                            AppState::Error("Add operation incomplete due to an error".to_string());
-                        self.shared_data
-                            .terminal_output
-                            .lock()
-                            .unwrap()
-                            .push(format!("{ERROR_TICK} Add operation errored: {}", err));
-                    }
-                },
-            }
-        }
-
         if self.untracked_files_to_add {
             match lib_git_add(
                 &self.shared_data.project_path.lock().unwrap(),
@@ -567,38 +611,38 @@ impl AutoGitApp {
         info!("handling restore");
         self.begin_operation("Restore");
 
-        if !self.restore_files_expanded && !self.files_to_restore {
-            match lib_get_files_to_restore(
-                &self.shared_data.project_path.lock().unwrap().clone(),
-                &mut self.restore_files,
-            ) {
-                Ok(_) => {
-                    self.shared_data
-                        .terminal_output
-                        .lock()
-                        .unwrap()
-                        .push(format!("{OK_TICK} Modified files to restore found!"));
-                    self.restore_files_expanded = true;
-                }
-                Err(err) => match err {
-                    Error::Io(_) => {
-                        *self.shared_data.state.lock().unwrap() =
-                            AppState::Error("Project path not set".to_string());
-                        self.shared_data.terminal_output.lock().unwrap().push(format!("{ERROR_TICK} Configure the project path from the menu 'Set Project'"));
-                    }
-                    _ => {
-                        *self.shared_data.state.lock().unwrap() = AppState::Error(
-                            "Restore operation incomplete due to an error".to_string(),
-                        );
-                        self.shared_data
-                            .terminal_output
-                            .lock()
-                            .unwrap()
-                            .push(format!("{ERROR_TICK} Restore operation errored: {}", err));
-                    }
-                },
-            }
-        }
+        // if !self.restore_files_expanded && !self.files_to_restore {
+        //     match lib_get_files_to_restore(
+        //         &self.shared_data.project_path.lock().unwrap().clone(),
+        //         &mut self.restore_files,
+        //     ) {
+        //         Ok(_) => {
+        //             self.shared_data
+        //                 .terminal_output
+        //                 .lock()
+        //                 .unwrap()
+        //                 .push(format!("{OK_TICK} Modified files to restore found!"));
+        //             self.restore_files_expanded = true;
+        //         }
+        //         Err(err) => match err {
+        //             Error::Io(_) => {
+        //                 *self.shared_data.state.lock().unwrap() =
+        //                     AppState::Error("Project path not set".to_string());
+        //                 self.shared_data.terminal_output.lock().unwrap().push(format!("{ERROR_TICK} Configure the project path from the menu 'Set Project'"));
+        //             }
+        //             _ => {
+        //                 *self.shared_data.state.lock().unwrap() = AppState::Error(
+        //                     "Restore operation incomplete due to an error".to_string(),
+        //                 );
+        //                 self.shared_data
+        //                     .terminal_output
+        //                     .lock()
+        //                     .unwrap()
+        //                     .push(format!("{ERROR_TICK} Restore operation errored: {}", err));
+        //             }
+        //         },
+        //     }
+        // }
 
         if self.files_to_restore {
             match lib_git_restore(
@@ -639,7 +683,7 @@ impl AutoGitApp {
                 },
             }
             self.files_to_restore = false;
-            self.restore_files_expanded = false;
+            // self.restore_files_expanded = false;
         }
 
         self.end_operation();
@@ -648,6 +692,56 @@ impl AutoGitApp {
     /// Operazione di Clone dei files
     fn handle_clone(&mut self) {
         info!("handling clone");
+        self.begin_operation("Clone");
+
+        let project_path = self.shared_data.project_path.lock().unwrap().clone();
+        match lib_git_clone(&project_path, &self.clone_repository_url) {
+            Ok(_) => {
+                self.shared_data
+                    .terminal_output
+                    .lock()
+                    .unwrap()
+                    .push(format!(
+                        "{OK_TICK} Repository cloned successfully in {}!",
+                        project_path.unwrap().display() // se è Ok siamo sicuri che project_path non sia None
+                    ));
+                *self.shared_data.state.lock().unwrap() =
+                    AppState::Success("Repository cloned successfully".to_string());
+            }
+            Err(err) => {
+                match err {
+                    Error::Io(err) => {
+                        if err.kind() == io::ErrorKind::InvalidData {
+                            *self.shared_data.state.lock().unwrap() =
+                                AppState::Error("Invalid Url".to_string());
+                            self.shared_data
+                                .terminal_output
+                                .lock()
+                                .unwrap()
+                                .push(format!(
+                                    "{ERROR_TICK} Url inserted is not a git repository!"
+                                ));
+                        }
+
+                        *self.shared_data.state.lock().unwrap() =
+                            AppState::Error("Project path not set".to_string());
+                        self.shared_data.terminal_output.lock().unwrap().push(format!("{ERROR_TICK} Configure the project path from the menu 'Set Project'"));
+                    }
+                    _ => {
+                        *self.shared_data.state.lock().unwrap() = AppState::Error(
+                            "Restore operation incomplete due to an error".to_string(),
+                        );
+                        self.shared_data
+                            .terminal_output
+                            .lock()
+                            .unwrap()
+                            .push(format!("{ERROR_TICK} Restore operation errored: {}", err));
+                    }
+                }
+            }
+        }
+        self.clone_repository_explanded = false;
+        self.end_operation();
     }
 
     fn draw_menu(&mut self, ui: &mut egui::Ui) {
@@ -687,6 +781,8 @@ impl AutoGitApp {
 
                         self.commit_input_expanded = false;
                         self.untracked_files_expanded = false;
+                        self.clone_repository_explanded = false;
+                        self.restore_files_expanded = false;
                     } else {
                         {
                             if let Ok(mut state) = self.shared_data.state.try_lock() {
@@ -791,7 +887,9 @@ impl AutoGitApp {
                             .fill(egui::Color32::from_rgb(76, 130, 80));
 
                     if ui.add(add_button).clicked() {
-                        self.handle_add();
+                        self.update_untracked_files_list();
+                        self.untracked_files_expanded = true;
+                        self.begin_operation("Select files to add");
                     }
                 });
 
@@ -804,7 +902,9 @@ impl AutoGitApp {
                             .fill(egui::Color32::from_rgb(255, 130, 0));
 
                     if ui.add(restore_button).clicked() {
-                        self.handle_restore();
+                        self.update_restore_modified_files_list();
+                        self.restore_files_expanded = true;
+                        self.begin_operation("Select files to restore");
                     }
                 });
 
@@ -817,7 +917,8 @@ impl AutoGitApp {
                             .fill(egui::Color32::from_rgb(33, 110, 255)); // Blu
 
                     if ui.add(clone_button).clicked() {
-                        self.handle_clone();
+                        self.clone_repository_explanded = true;
+                        self.begin_operation("Repository url");
                     }
                 });
 
@@ -905,9 +1006,6 @@ impl AutoGitApp {
 
                     if ui.add(abort_button).clicked() {
                         self.idle();
-                        self.commit_input_expanded = false;
-                        self.untracked_files_expanded = false;
-                        self.restore_files_expanded = false;
                         self.add_terminal_output("Operation aborted".to_string());
                         *self.shared_data.state.lock().unwrap() = AppState::Idle;
                     }
@@ -1117,7 +1215,7 @@ impl AutoGitApp {
                         .fill(egui::Color32::from_rgb(76, 190, 80));
 
                         ui.horizontal(|ui| {
-                            ui.add_space(ui.available_width() / 2.0 - 45.0);
+                            ui.add_space(ui.available_width() / 2.0 - 50.0);
                             if ui.add(all_button).clicked() {
                                 self.untracked_files
                                     .iter_mut()
@@ -1128,7 +1226,7 @@ impl AutoGitApp {
 
                             if ui.add(add_button).clicked() {
                                 self.untracked_files_to_add = true;
-                                self.untracked_files_expanded = false;
+                                // self.untracked_files_expanded = false;
                                 self.handle_add();
                             }
                         });
@@ -1196,10 +1294,46 @@ impl AutoGitApp {
 
                             if ui.add(restore_button).clicked() {
                                 self.files_to_restore = true;
-                                self.restore_files_expanded = false;
+                                // self.restore_files_expanded = false;
                                 self.handle_restore();
                             }
                         });
+                    });
+            });
+        }
+    }
+
+    fn draw_clone_repository(&mut self, ui: &mut egui::Ui) {
+        if self.clone_repository_explanded {
+            ui.vertical_centered(|ui| {
+                ui.set_max_width(ui.available_width() - 100.0);
+
+                egui::Frame::group(ui.style())
+                    .inner_margin(egui::Margin::symmetric(20, 15))
+                    .show(ui, |ui| {
+                        ui.vertical_centered(|ui| {
+                            ui.vertical_centered(|ui| {
+                                ui.heading(RichText::new("📩 Clone Repository").size(15.).strong())
+                            });
+
+                            ui.separator();
+
+                            ui.text_edit_singleline(&mut self.clone_repository_url)
+                                .on_hover_text("Repository url");
+
+                            let clone_button = egui::Button::new(
+                                egui::RichText::new("Clone").size(13.0).strong().heading(),
+                            )
+                            .min_size(egui::vec2(30., 20.))
+                            .fill(egui::Color32::from_rgb(76, 190, 80));
+
+                            ui.horizontal(|ui| {
+                                ui.add_space(ui.available_width() / 2.0 - 20.0);
+                                if ui.add(clone_button).clicked() {
+                                    self.handle_clone();
+                                }
+                            });
+                        })
                     });
             });
         }
@@ -1250,6 +1384,7 @@ impl eframe::App for AutoGitApp {
             self.draw_commit_input(ui);
             self.draw_add_untracked_files(ui);
             self.draw_restore_files(ui);
+            self.draw_clone_repository(ui);
 
             // Spazio flessibile per spingere il pannello terminale in basso
             // ui.add_space(available_height - 300.0);
