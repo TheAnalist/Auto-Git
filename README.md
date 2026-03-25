@@ -32,8 +32,7 @@ Requirement: Auto-Git is designed exclusively for Windows.
 1. Download the latest .zip from the Releases page.
 2. Unzip the release .zip
 3. Ensure you have Git for Windows installed.
-4. Run install.bat inside **tool-install** directory and wait for **Auto-Git** to start.
-5. Auto-Git executable will be moved to *Windows Startup* dir, to automatically execute when starting the computer.
+4. Run Auto-Git.exe from the expandend folder
 
 ## How to Use
 
@@ -48,6 +47,8 @@ If the app behaves unexpectedly:
 * Use the Reset State option in the menu.
 * Check the terminal output at the bottom for specific Git error codes.
 * Ensure no other process is locking the .git folder.
+
+If any permanent issue comes please report it in the `Issues` section of the repository.
 
 ## Roadmap
 
